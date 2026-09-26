@@ -2740,6 +2740,17 @@ QList<qreal> sampled(const std::function<qreal()> &valueNow, int forMs, int ever
     return out;
 }
 
+// Points at `item` until `done` holds. An item that has just appeared may not be
+// laid out where it will be yet, and one move to its centre then points at where
+// it is not: re-aimed on each try, the pointer ends up over it.
+bool pointAtUntil(QQuickWindow &window, QQuickItem *item, const std::function<bool()> &done)
+{
+    return QTest::qWaitFor([&] {
+        QTest::mouseMove(&window, centreOf(item));
+        return done();
+    }, 5000);
+}
+
 bool strays(const QList<qreal> &values, qreal from, qreal by)
 {
     return std::any_of(values.cbegin(), values.cend(), [from, by](qreal v) { return std::abs(v - from) >= by; });
@@ -2791,11 +2802,17 @@ void TestQmlUi::theUpdateArrowBendsUnderThePointerAndBack()
     QVERIFY(icon && arrow);
     const QPoint away(10, 10);
 
+    // Appearing, it is ↓ at once, whether it appears after nothing or after a
+    // check: animated from the shape a hidden arrow was left in, it swung in.
+    QTest::qWait(50);
     m_backend.setUpdate(QStringLiteral("available"), QStringLiteral("Version 9.9.9 is available"));
     QCOMPARE(icon->property("offer").toString(), QStringLiteral("download"));
-    QTRY_COMPARE(arrow->property("bend").toReal(), 0.0);
-    QTest::mouseMove(&window, centreOf(icon));
-    QTRY_COMPARE(arrow->property("bend").toReal(), 1.0);
+    QCOMPARE(arrow->property("bend").toReal(), 0.0);
+    m_backend.setUpdate(QStringLiteral("checking"), QStringLiteral("Checking…"));
+    QTest::qWait(50);
+    m_backend.setUpdate(QStringLiteral("available"), QStringLiteral("Version 9.9.9 is available"));
+    QCOMPARE(arrow->property("bend").toReal(), 0.0);
+    QVERIFY2(pointAtUntil(window, icon, [arrow] { return arrow->property("bend").toReal() == 1.0; }), "the arrow did not bend under the pointer");
     QTest::mouseMove(&window, away);
     QTRY_COMPARE(arrow->property("bend").toReal(), 0.0);
 
@@ -2803,8 +2820,8 @@ void TestQmlUi::theUpdateArrowBendsUnderThePointerAndBack()
     QCOMPARE(icon->property("offer").toString(), QStringLiteral("retry"));
     QTRY_COMPARE(arrow->property("bend").toReal(), 1.0);
     QCOMPARE(arrow->property("turn").toReal(), 0.0);
-    QTest::mouseMove(&window, centreOf(icon));
-    QTRY_VERIFY2(arrow->property("turn").toReal() > 10, "retry did not lean clockwise under the pointer");
+    QVERIFY2(pointAtUntil(window, icon, [arrow] { return arrow->property("turn").toReal() > 10; }),
+             "retry did not lean clockwise under the pointer");
     QTest::mouseMove(&window, away);
 
     m_backend.updateErrorOpensPage = true;
@@ -2866,13 +2883,19 @@ void TestQmlUi::theUpdateArrowBendsFromDownIntoAClockwiseCircle()
     }
     QVERIFY2(turned > 4.5, qPrintable(QStringLiteral("turned %1 rad").arg(turned)));
     QCOMPARE(round.head.at(1), round.shaft.last());
+    // Neither barb lies along the circle: laid on the tangent, the inner one did.
+    for (int barb : {0, 2}) {
+        const qreal off = QLineF(round.pivot, round.head.at(barb)).length() - radius;
+        QVERIFY2(qAbs(off) >= 2.0, qPrintable(QStringLiteral("barb %1 is %2 px off the circle").arg(barb).arg(off)));
+    }
     delete root;
 }
 
-// While the update comes down, or a check runs, the ↻ turns: a still "…" beside a
-// percentage looked the same whether it moved or had stalled. The pointer leaving
-// does not straighten it then, since the work is under way; and when the work
-// ends it comes round to rest rather than stopping at an angle.
+// While the update comes down the ↻ turns: a still "…" beside a percentage looked
+// the same whether it moved or had stalled. The pointer leaving does not
+// straighten it then, since the work is under way, and when the work ends it
+// comes round to rest rather than stopping at an angle. A check is not a
+// download, and shows hopping dots rather than the arrow.
 void TestQmlUi::theUpdateArrowTurnsWhileItWorks()
 {
     const auto restore = qScopeGuard([this] { m_backend.setUpdate(QString(), QString()); });
@@ -2882,22 +2905,33 @@ void TestQmlUi::theUpdateArrowTurnsWhileItWorks()
     QVERIFY(showInWindow(root, window, 400, 1400));
     auto *icon = root->findChild<QQuickItem *>(QStringLiteral("updateIcon"));
     auto *arrow = root->findChild<QQuickItem *>(QStringLiteral("updateArrow"));
-    QVERIFY(icon && arrow);
+    auto *dots = root->findChild<QQuickItem *>(QStringLiteral("updateChecking"));
+    QVERIFY(icon && arrow && dots);
     const auto angle = [arrow] { return arrow->property("spinAngle").toReal(); };
 
-    for (const QString &state : {QStringLiteral("downloading"), QStringLiteral("checking")}) {
-        m_backend.setUpdate(QStringLiteral("available"), QStringLiteral("Version 9.9.9 is available"));
-        QTest::mouseMove(&window, centreOf(icon));
-        QTRY_COMPARE(arrow->property("bend").toReal(), 1.0);
-        m_backend.setUpdate(state, QStringLiteral("Working… 42%"));
-        QCOMPARE(icon->property("offer").toString(), QStringLiteral("busy"));
-        QTest::mouseMove(&window, QPoint(10, 10));
-        QVERIFY2(strays(sampled(angle, 900), 0.0, 30), qPrintable(state + QStringLiteral(": the arrow stood still")));
-        QCOMPARE(arrow->property("bend").toReal(), 1.0);
+    m_backend.setUpdate(QStringLiteral("available"), QStringLiteral("Version 9.9.9 is available"));
+    QVERIFY2(pointAtUntil(window, icon, [arrow] { return arrow->property("bend").toReal() == 1.0; }), "the arrow did not bend under the pointer");
+    m_backend.setUpdate(QStringLiteral("downloading"), QStringLiteral("Downloading… 42%"));
+    QCOMPARE(icon->property("offer").toString(), QStringLiteral("downloading"));
+    QTest::mouseMove(&window, QPoint(10, 10));
+    QVERIFY2(strays(sampled(angle, 900), 0.0, 30), "the arrow stood still while downloading");
+    QCOMPARE(arrow->property("bend").toReal(), 1.0);
+    QVERIFY(!dots->isVisible());
+    m_backend.setUpdate(QStringLiteral("error"), QStringLiteral("Download failed"));
+    QTRY_COMPARE(angle(), 0.0);
 
-        m_backend.setUpdate(QStringLiteral("error"), QStringLiteral("Download failed"));
-        QTRY_COMPARE(angle(), 0.0);
+    m_backend.setUpdate(QStringLiteral("checking"), QStringLiteral("Checking…"));
+    QCOMPARE(icon->property("offer").toString(), QStringLiteral("checking"));
+    QVERIFY(dots->isVisible());
+    QVERIFY(!arrow->isVisible());
+    QQuickItem *dot = nullptr;
+    const QList<QQuickItem *> inDots = dots->childItems();
+    for (QQuickItem *child : inDots) {
+        if (child->inherits("QQuickRectangle"))
+            dot = child;
     }
+    QVERIFY(dot);
+    QVERIFY2(strays(sampled([dot] { return dot->y(); }, 1000), 0.0, 2), "the dots stood still while checking");
     delete root;
 }
 
