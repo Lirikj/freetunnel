@@ -48,9 +48,16 @@ Get the build for your platform from
 | **Linux** (Debian/Ubuntu/Pop!_OS) | `freetunnel-linux-x86_64.deb` |
 | **Linux** (portable, most distros with glibc 2.31 or newer: Ubuntu 20.04+, Debian 11+, RHEL 9, Fedora, Arch…) | `freetunnel-x86_64.AppImage` |
 
+## Android preview
+
+The [`android/`](android/) project provides an Android client using the official
+TrustTunnel adapter. See its README for build instructions, routing behavior,
+system lockdown and the scope of device testing. Official Android builds and
+signing are managed by this project after the preview is merged.
+
 ## Install and first launch
 
-Builds are **unsigned** (no code-signing certificates), so the OS may warn on
+Desktop builds are **unsigned** (no code-signing certificates), so the OS may warn on
 first launch.
 
 ### Windows
