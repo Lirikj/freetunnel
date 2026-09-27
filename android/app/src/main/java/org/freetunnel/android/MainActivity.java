@@ -11,6 +11,8 @@ import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.database.Cursor;
+import android.provider.OpenableColumns;
 import android.provider.Settings;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -473,11 +475,15 @@ public final class MainActivity extends Activity {
                 }).show();
     }
     private void importToml(String name, String toml) {
+        toml = stripBom(toml);
         if (!toml.contains("[endpoint]") || !toml.contains("[listener.tun]")) {
             toast("Ожидается TOML с секциями [endpoint] и [listener.tun]"); return;
         }
         configs.add(new Config(name, toml)); if (configs.size() == 1) activeIndex = 0;
         saveConfigs(); render();
+    }
+    private static String stripBom(String toml) {
+        return toml.startsWith("\uFEFF") ? toml.substring(1) : toml;
     }
     private void editConfig(int index) {
         LinearLayout form = column(); form.setPadding(dp(20), dp(5), dp(20), 0);
@@ -492,7 +498,7 @@ public final class MainActivity extends Activity {
         new AlertDialog.Builder(this).setTitle(index < 0 ? "Новый конфиг" : "Изменить конфиг")
                 .setView(scroll).setNegativeButton("Отмена", null)
                 .setPositiveButton("Сохранить", (dialog, which) -> {
-                    String n = name.getText().toString().trim(), t = raw.getText().toString().trim();
+                    String n = name.getText().toString().trim(), t = stripBom(raw.getText().toString().trim());
                     if (n.isEmpty()) { toast("Укажите имя конфига"); return; }
                     if (!t.contains("[endpoint]") || !t.contains("[listener.tun]")) { toast("Нужен полный TrustTunnel TOML"); return; }
                     if (index < 0) configs.add(new Config(n, t)); else configs.set(index, new Config(n, t));
@@ -519,7 +525,13 @@ public final class MainActivity extends Activity {
             if (input == null) return;
             byte[] bytes = new byte[8192]; int n; int total = 0;
             while ((n = input.read(bytes)) != -1) { total += n; if (total > 1024 * 1024) { toast("Файл слишком большой"); return; } out.write(bytes, 0, n); }
-            String name = uri.getLastPathSegment(); if (name == null) name = "Конфиг";
+            String name = null;
+            try (Cursor cursor = getContentResolver().query(uri,
+                    new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+                if (cursor != null && cursor.moveToFirst()) name = cursor.getString(0);
+            } catch (Exception ignored) { }
+            if (name == null || name.isEmpty()) name = uri.getLastPathSegment();
+            if (name == null || name.isEmpty()) name = "Конфиг";
             int slash = name.lastIndexOf('/'); if (slash >= 0) name = name.substring(slash + 1);
             importToml(name, out.toString(StandardCharsets.UTF_8.name()));
         } catch (Exception e) { toast("Не удалось открыть файл"); }
