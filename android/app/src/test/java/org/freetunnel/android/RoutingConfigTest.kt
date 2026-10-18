@@ -99,6 +99,13 @@ class RoutingConfigTest {
         assertThrows(IllegalArgumentException::class.java) { plan(text = source + "\nnot valid") }
         assertThrows(IllegalArgumentException::class.java) { plan(text = source.replace("443", "99999")) }
     }
+    @Test fun invalidAndroidTunSettingsAreRejectedBeforeSaving() {
+        assertThrows(IllegalStateException::class.java) { plan(text = source.substringBefore("[listener.tun]")) }
+        assertThrows(IllegalArgumentException::class.java) { plan(text = source.replace("1350", "0")) }
+        assertThrows(IllegalArgumentException::class.java) { plan(text = source.replace("192.168.0.0/16", "192.168.0.0/99")) }
+        assertThrows(IllegalArgumentException::class.java) { plan(text = source.replace("has_ipv6 = false", "has_ipv6 = true").replace("1350", "1200")) }
+        assertNotNull(plan(text = source.replace("1350", "1200")))
+    }
     @Test fun modeChangeDoesNotReverseImportedRules() {
         assertFalse(Toml.parse(plan(domains = listOf("example.org")).toml).getArray("exclusions")!!.toList().contains("intranet.example"))
     }

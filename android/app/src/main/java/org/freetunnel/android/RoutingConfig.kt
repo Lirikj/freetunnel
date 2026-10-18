@@ -43,6 +43,16 @@ object RoutingConfig {
         require(endpoint.getString("upstream_protocol")?.let { it in listOf("http2", "http3") } != false) { "Укажите upstream_protocol: http2 или http3" }
         require(parsed.getString("vpn_mode")?.let { it in listOf("general", "selective") } != false) { "Неизвестный vpn_mode" }
         parsed.getArray("exclusions")?.let { a -> (0 until a.size()).forEach { a.getString(it) } }
+        val tun = parsed.getTable("listener.tun") ?: error("Missing listener.tun")
+        val included = tun.getArray("included_routes") ?: error("Missing included_routes")
+        require(included.size() > 0) { "Empty included_routes" }
+        val routes = (0 until included.size()).map { included.getString(it) }
+        val excluded = tun.getArray("excluded_routes")
+        val allRoutes = routes + (excluded?.let { a -> (0 until a.size()).map { a.getString(it) } }.orEmpty())
+        require(allRoutes.all { SplitRules.subnet(it) != null && '/' in it }) { "Invalid TUN route" }
+        val ipv6 = (endpoint.getBoolean("has_ipv6") ?: false) && routes.any { ':' in it }
+        val mtu = tun.getLong("mtu_size") ?: 1500L
+        require(mtu in (if (ipv6) 1280L else 576L)..65535L) { "Invalid TUN MTU" }
         return parsed
     }
 
