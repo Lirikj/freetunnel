@@ -4,3 +4,7 @@ app/build/
 local.properties
 *.iml
 .idea/
+app/libs/*.aar
+*.jks
+*.keystore
+.kotlin/
