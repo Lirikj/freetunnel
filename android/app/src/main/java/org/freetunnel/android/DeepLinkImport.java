@@ -29,7 +29,8 @@ final class DeepLinkImport {
     }
 
     static final class ParseException extends Exception {
-        ParseException(String message) { super(message); }
+        final int messageResource;
+        ParseException(int messageResource) { super("Invalid TrustTunnel link"); this.messageResource = messageResource; }
     }
 
     private static final class Fields {
@@ -59,22 +60,22 @@ final class DeepLinkImport {
 
     static Imported parse(String link) throws ParseException {
         String payload = extractPayload(link);
-        if (payload.isEmpty() || !payload.matches("[A-Za-z0-9_-]+"))
-            throw new ParseException("Некорректная ссылка TrustTunnel");
+        if (payload.isEmpty() || !payload.matches("[A-Za-z0-9_-]+={0,2}"))
+            throw new ParseException(R.string.text_invalid_trusttunnel_link);
         byte[] bytes;
         try { bytes = Base64.getUrlDecoder().decode(payload); }
-        catch (IllegalArgumentException e) { throw new ParseException("Некорректная ссылка TrustTunnel"); }
+        catch (IllegalArgumentException e) { throw new ParseException(R.string.text_invalid_trusttunnel_link); }
         if (bytes.length == 0 || bytes.length > MAX_PAYLOAD_BYTES)
-            throw new ParseException("Размер ссылки не поддерживается");
+            throw new ParseException(R.string.text_unsupported_link_size);
 
         Fields fields = decode(bytes);
-        if (fields.version > 1) throw new ParseException("Версия ссылки пока не поддерживается");
+        if (fields.version > 1) throw new ParseException(R.string.text_unsupported_link_version);
         if (fields.hostname == null || fields.hostname.isEmpty() || fields.addresses.isEmpty()
                 || fields.username == null || fields.username.isEmpty()
                 || fields.password == null || fields.password.isEmpty())
-            throw new ParseException("В ссылке не хватает данных сервера");
+            throw new ParseException(R.string.text_the_link_is_missing_required_server_settings);
         String hostname = clean(fields.hostname).trim();
-        if (hostname.isEmpty()) throw new ParseException("В ссылке не хватает данных сервера");
+        if (hostname.isEmpty()) throw new ParseException(R.string.text_the_link_is_missing_required_server_settings);
         String name = clean(fields.displayName).trim();
         if (name.isEmpty()) name = hostname;
         if (name.length() > 80) name = name.substring(0, 80);
@@ -82,8 +83,9 @@ final class DeepLinkImport {
     }
 
     private static String extractPayload(String link) throws ParseException {
-        String text = link == null ? "" : link.trim();
-        if (text.length() > MAX_LINK_CHARS) throw new ParseException("Ссылка слишком длинная");
+        if (link != null && link.length() > MAX_LINK_CHARS) throw new ParseException(R.string.text_the_link_is_too_long);
+        String text = link == null ? "" : link.replaceAll("[\\t\\r\\n ]", "").trim();
+        if (text.length() > MAX_LINK_CHARS) throw new ParseException(R.string.text_the_link_is_too_long);
         if (text.startsWith("tt://?")) return text.substring(6);
         if (text.startsWith("tt://")) return text.substring(5);
         try {
@@ -93,20 +95,23 @@ final class DeepLinkImport {
                     || !("trusttunnel.org".equalsIgnoreCase(host)
                     || "www.trusttunnel.org".equalsIgnoreCase(host))
                     || !"/qr.html".equals(uri.getPath()))
-                throw new ParseException("Ожидается ссылка TrustTunnel");
+                throw new ParseException(R.string.text_expected_a_trusttunnel_link);
             String payload = queryValue(uri.getRawFragment());
             if (payload == null) payload = queryValue(uri.getRawQuery());
             if (payload != null) return payload;
-        } catch (java.net.URISyntaxException e) {
-            throw new ParseException("Некорректная ссылка TrustTunnel");
+        } catch (java.net.URISyntaxException | IllegalArgumentException e) {
+            throw new ParseException(R.string.text_invalid_trusttunnel_link);
         }
-        throw new ParseException("В ссылке нет конфигурации");
+        throw new ParseException(R.string.text_the_link_contains_no_configuration);
     }
 
     private static String queryValue(String part) {
         if (part == null) return null;
         for (String item : part.split("&"))
-            if (item.startsWith("tt=")) return item.substring(3);
+            if (item.startsWith("tt=")) {
+                try { return java.net.URLDecoder.decode(item.substring(3), "UTF-8"); }
+                catch (java.io.UnsupportedEncodingException impossible) { throw new AssertionError(impossible); }
+            }
         return null;
     }
 
@@ -116,7 +121,7 @@ final class DeepLinkImport {
         while (pos[0] < bytes.length) {
             long tag = readVarint(bytes, pos, bytes.length);
             long length = readVarint(bytes, pos, bytes.length);
-            if (length > bytes.length - pos[0]) throw new ParseException("Ссылка повреждена");
+            if (length > bytes.length - pos[0]) throw new ParseException(R.string.text_the_link_is_damaged);
             int end = pos[0] + (int) length;
             if (tag > 13) { pos[0] = end; continue; }
             switch ((int) tag) {
@@ -143,12 +148,12 @@ final class DeepLinkImport {
 
     private static long scalar(byte[] bytes, int[] pos, int end) throws ParseException {
         long value = readVarint(bytes, pos, end);
-        if (pos[0] != end) throw new ParseException("Ссылка повреждена");
+        if (pos[0] != end) throw new ParseException(R.string.text_the_link_is_damaged);
         return value;
     }
 
     private static boolean bool(byte[] bytes, int start, int end) throws ParseException {
-        if (end - start != 1) throw new ParseException("Ссылка повреждена");
+        if (end - start != 1) throw new ParseException(R.string.text_the_link_is_damaged);
         return bytes[start] != 0;
     }
 
@@ -164,14 +169,14 @@ final class DeepLinkImport {
                     .onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT)
                     .decode(ByteBuffer.wrap(bytes, start, end - start)).toString();
-        } catch (CharacterCodingException e) { throw new ParseException("Некорректный текст в ссылке"); }
+        } catch (CharacterCodingException e) { throw new ParseException(R.string.text_the_link_contains_invalid_text); }
     }
 
     private static void decodeDns(byte[] bytes, int start, int end, List<String> dns) throws ParseException {
         int[] pos = {start};
         while (pos[0] < end) {
             long length = readVarint(bytes, pos, end);
-            if (length > end - pos[0]) throw new ParseException("Ссылка повреждена");
+            if (length > end - pos[0]) throw new ParseException(R.string.text_the_link_is_damaged);
             int next = pos[0] + (int) length;
             dns.add(utf8(bytes, pos[0], next));
             pos[0] = next;
@@ -179,10 +184,10 @@ final class DeepLinkImport {
     }
 
     private static long readVarint(byte[] bytes, int[] pos, int end) throws ParseException {
-        if (pos[0] >= end) throw new ParseException("Ссылка повреждена");
+        if (pos[0] >= end) throw new ParseException(R.string.text_the_link_is_damaged);
         int first = bytes[pos[0]++] & 0xff;
         int width = 1 << (first >>> 6);
-        if (width - 1 > end - pos[0]) throw new ParseException("Ссылка повреждена");
+        if (width - 1 > end - pos[0]) throw new ParseException(R.string.text_the_link_is_damaged);
         long value = first & 0x3f;
         for (int i = 1; i < width; i++) value = (value << 8) | (bytes[pos[0]++] & 0xffL);
         return value;
@@ -223,20 +228,20 @@ final class DeepLinkImport {
         int pos = 0;
         while (pos < der.length) {
             if (pos + 2 > der.length || (der[pos] & 0xff) != 0x30)
-                throw new ParseException("Некорректный сертификат в ссылке");
+                throw new ParseException(R.string.text_the_link_contains_an_invalid_certificate);
             int first = der[pos + 1] & 0xff;
             int header = 2;
             long length = first;
             if ((first & 0x80) != 0) {
                 int count = first & 0x7f;
                 if (count == 0 || count > 4 || pos + 2 + count > der.length)
-                    throw new ParseException("Некорректный сертификат в ссылке");
+                    throw new ParseException(R.string.text_the_link_contains_an_invalid_certificate);
                 length = 0;
                 for (int i = 0; i < count; i++) length = (length << 8) | (der[pos + 2 + i] & 0xff);
                 header += count;
             }
             long end = pos + header + length;
-            if (end > der.length) throw new ParseException("Некорректный сертификат в ссылке");
+            if (end > der.length) throw new ParseException(R.string.text_the_link_contains_an_invalid_certificate);
             String b64 = Base64.getEncoder().encodeToString(copy(der, pos, (int) end));
             out.append("-----BEGIN CERTIFICATE-----\n");
             for (int i = 0; i < b64.length(); i += 64)
@@ -249,7 +254,7 @@ final class DeepLinkImport {
 
     private static String toToml(Fields f) throws ParseException {
         StringBuilder out = new StringBuilder();
-        out.append("loglevel = \"info\"\nvpn_mode = \"general\"\nkillswitch_enabled = false\n");
+        out.append("loglevel = \"info\"\nvpn_mode = \"general\"\nkillswitch_enabled = true\n");
         out.append("post_quantum_group_enabled = true\n");
         out.append("\n[endpoint]\n");
         out.append("hostname = ").append(quoted(f.hostname)).append('\n');
@@ -267,7 +272,7 @@ final class DeepLinkImport {
         if (pem.isEmpty()) out.append("certificate = \"\"\n");
         else out.append("certificate = \"\"\"\n").append(pem).append("\"\"\"\n");
         out.append("\n[listener.tun]\nbound_if = \"\"\nmtu_size = 1500\nchange_system_dns = true\n");
-        out.append("included_routes = [\"0.0.0.0/0\", \"2000::/3\"]\n");
+        out.append("included_routes = [\"0.0.0.0/0\", \"::/0\"]\n");
         out.append("excluded_routes = [\"0.0.0.0/8\", \"10.0.0.0/8\", \"169.254.0.0/16\", ");
         out.append("\"172.16.0.0/12\", \"192.168.0.0/16\", \"224.0.0.0/3\"]\n");
         return out.toString();

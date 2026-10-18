@@ -33,16 +33,13 @@ Download a build for your platform from
 | **Linux** (Debian/Ubuntu/Pop!_OS) | `freetunnel-linux-x86_64.deb` |
 | **Linux** (portable, any distro) | `freetunnel-linux-x86_64.AppImage` |
 
-### Android design preview
+### Android preview
 
-The [`android/`](android/) project provides an installable preview of FreeTunnel's
-Android interface. It includes configuration management, a TCP server latency
-check, `tt://` and TrustTunnel QR-page link import, domain and app rule editors,
-and a Quick Settings tile that opens the app.
-**This preview does not establish a VPN connection or route traffic.** The Android TrustTunnel core has
-not yet been integrated; the saved split tunnelling rules are therefore inactive.
-See [the Android README](android/README.md) for the exact feature status and
-build instructions.
+The [`android/`](android/) project is a working Android VPN client using the
+checksum-pinned official TrustTunnel 1.1.7 adapter. It supports encrypted configs,
+confirmed link/file import, domain and app routing, kill switch, and a Quick
+Settings tile. The Android README documents selective-routing fallbacks,
+system lockdown, build/signing instructions, and device-test limitations.
 
 Builds are **unsigned** (no code-signing certificates), so the OS may warn on first launch:
 

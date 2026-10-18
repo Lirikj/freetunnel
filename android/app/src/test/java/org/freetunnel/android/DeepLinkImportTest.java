@@ -90,4 +90,12 @@ public final class DeepLinkImportTest {
         assertTrue(parsed.toml.contains("username = \"useranti_dpi = true\""));
         assertFalse(parsed.toml.contains("\nanti_dpi = true\n"));
     }
+    @Test public void paddedWrappedAndPercentEncodedQrLinksWork() throws Exception {
+        String payload = Base64.getUrlEncoder().encodeToString(example());
+        String wrapped = payload.substring(0, 20) + "\r\n" + payload.substring(20);
+        assertEquals(DeepLinkImport.parse(link(example())).toml, DeepLinkImport.parse("tt://?" + wrapped).toml);
+        assertEquals(DeepLinkImport.parse(link(example())).toml,
+                DeepLinkImport.parse("https://trusttunnel.org/qr.html#tt=" + payload.replace("=", "%3D")).toml);
+        assertTrue(DeepLinkImport.parse(link(example())).toml.contains("killswitch_enabled = true"));
+    }
 }
