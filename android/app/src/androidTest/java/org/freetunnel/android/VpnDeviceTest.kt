@@ -158,7 +158,7 @@ class VpnDeviceTest {
             sink.close(); accepting.join(500); sockets.forEach { it.close() }
         }
     }
-    @Test fun androidCanRecreateServiceFromSavedSelectedProfile() {
+    @Test fun serviceStartsFromSavedProfileWithoutIntentExtras() {
         assertNull(VpnService.prepare(context))
         val sink = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
         val sockets = ConcurrentLinkedQueue<Socket>()
@@ -167,7 +167,7 @@ class VpnDeviceTest {
             val config = source.replace("192.0.2.1:443", "127.0.0.1:${sink.localPort}").replace("1350", "1200")
             val json = org.json.JSONArray().put(org.json.JSONObject().put("name", "Recovery test").put("toml", config)).toString()
             assertTrue(ConfigStore.write(prefs, json))
-            // Android's sticky/Always-on recovery has no config or action extras.
+            // Reproduces the start contract, not Android's process-restart scheduling.
             context.startForegroundService(Intent(context, FreeTunnelVpnService::class.java))
             val cm = context.getSystemService(ConnectivityManager::class.java)
             eventually { network()?.let { cm.getLinkProperties(it)?.mtu == 1200 } == true }
