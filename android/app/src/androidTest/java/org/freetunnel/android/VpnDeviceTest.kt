@@ -164,13 +164,13 @@ class VpnDeviceTest {
         val sockets = ConcurrentLinkedQueue<Socket>()
         val accepting = thread(isDaemon = true) { runCatching { while (!sink.isClosed) sockets.add(sink.accept()) } }
         try {
-            val config = source.replace("192.0.2.1:443", "127.0.0.1:${sink.localPort}").replace("1350", "1390")
+            val config = source.replace("192.0.2.1:443", "127.0.0.1:${sink.localPort}").replace("1350", "1200")
             val json = org.json.JSONArray().put(org.json.JSONObject().put("name", "Recovery test").put("toml", config)).toString()
             assertTrue(ConfigStore.write(prefs, json))
             // Android's sticky/Always-on recovery has no config or action extras.
             context.startForegroundService(Intent(context, FreeTunnelVpnService::class.java))
             val cm = context.getSystemService(ConnectivityManager::class.java)
-            eventually { network()?.let { cm.getLinkProperties(it)?.mtu == 1390 } == true }
+            eventually { network()?.let { cm.getLinkProperties(it)?.mtu == 1200 } == true }
             assertNotEquals(0, FreeTunnelVpnService.state(context))
         } finally {
             context.stopService(Intent(context, FreeTunnelVpnService::class.java))
