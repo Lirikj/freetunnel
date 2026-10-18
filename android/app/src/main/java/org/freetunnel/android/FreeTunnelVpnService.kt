@@ -76,6 +76,9 @@ class FreeTunnelVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         latestStartId = startId
+        // A new start may arrive after stopForeground but before onDestroy.
+        // onCreate is not called again in that window; acknowledge every FGS start.
+        startForeground(NOTIFICATION_ID, notification(getString(R.string.text_connecting)))
         execute {
             if (destroyed || startId != latestStartId) return@execute
             if (intent?.action == ACTION_STOP) {
@@ -169,10 +172,10 @@ class FreeTunnelVpnService : VpnService() {
 
     private fun createTun(config: VpnServiceConfig, hasIpv6: Boolean, plan: RoutingConfig.Plan): ParcelFileDescriptor {
         val tun = config.listener.tun
-        require(tun.mtuSize in 1280..65535) { "Неверный MTU" }
+        val ipv6 = hasIpv6 && tun.includedRoutes.any { ':' in it }
+        require(tun.mtuSize in (if (ipv6) 1280L else 576L)..65535L) { "Неверный MTU" }
         val builder = Builder().setSession("FreeTunnel").setMtu(tun.mtuSize.toInt()).addAddress("172.20.2.13", 32)
         if (Build.VERSION.SDK_INT >= 29) builder.setMetered(false)
-        val ipv6 = hasIpv6 && tun.includedRoutes.any { ':' in it }
         if (ipv6) builder.addAddress("fdfd:29::2", 128)
         // Never call allowFamily: an absent family must be blocked by Android.
         val dns = if (config.endpoint.dnsUpstreams.isEmpty()) listOf("46.243.231.30", "46.243.231.31") else listOf("198.18.53.53")
