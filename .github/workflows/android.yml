@@ -58,11 +58,10 @@ jobs:
           arch: x86_64
           profile: pixel_2
           script: |
-            cd android
-            ./gradlew --no-daemon :app:installDebug :app:installDebugAndroidTest
+            ./android/gradlew -p android --no-daemon :app:installDebug :app:installDebugAndroidTest
             adb shell appops set org.freetunnel.android ACTIVATE_VPN allow
             adb shell pm grant org.freetunnel.android android.permission.POST_NOTIFICATIONS
-            ./gradlew --no-daemon :app:connectedDebugAndroidTest
+            ./android/gradlew -p android --no-daemon :app:connectedDebugAndroidTest
       - uses: actions/upload-artifact@v4
         if: always()
         with:
