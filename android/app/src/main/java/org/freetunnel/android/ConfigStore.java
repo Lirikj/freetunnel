@@ -23,10 +23,14 @@ final class ConfigStore {
         String value = prefs.getString(FIELD, null);
         if (value == null) return prefs.getString("configs", "[]");
         String decrypted = decrypt(value);
-        return decrypted == null ? "[]" : decrypted;
+        if (decrypted == null) throw new IllegalStateException("Не удалось расшифровать сохранённые конфиги");
+        return decrypted;
     }
 
     static boolean write(SharedPreferences prefs, String json) {
+        // Recheck current storage before every write, including another Activity's writes.
+        try { new org.json.JSONArray(read(prefs)); }
+        catch (Exception error) { return false; }
         String encrypted = encrypt(json);
         return encrypted != null && prefs.edit().putString(FIELD, encrypted)
                 .remove("configs").commit();
@@ -35,7 +39,7 @@ final class ConfigStore {
     static String encrypt(String value) {
         try {
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.ENCRYPT_MODE, key());
+            cipher.init(Cipher.ENCRYPT_MODE, key(true));
             byte[] nonce = cipher.getIV();
             byte[] ciphertext = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));
             byte[] packet = new byte[nonce.length + ciphertext.length];
@@ -52,14 +56,15 @@ final class ConfigStore {
             byte[] nonce = Arrays.copyOfRange(packet, 0, 12);
             byte[] ciphertext = Arrays.copyOfRange(packet, 12, packet.length);
             Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, nonce));
+            cipher.init(Cipher.DECRYPT_MODE, key(false), new GCMParameterSpec(128, nonce));
             return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
         } catch (Exception e) { return null; }
     }
 
-    private static SecretKey key() throws Exception {
+    private static SecretKey key(boolean create) throws Exception {
         KeyStore store = KeyStore.getInstance("AndroidKeyStore"); store.load(null);
         if (store.containsAlias(ALIAS)) return ((KeyStore.SecretKeyEntry) store.getEntry(ALIAS, null)).getSecretKey();
+        if (!create) throw new IllegalStateException("Ключ Android Keystore недоступен");
         KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
         generator.init(new KeyGenParameterSpec.Builder(ALIAS,
                 KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)

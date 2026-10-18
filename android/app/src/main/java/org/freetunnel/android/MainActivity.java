@@ -37,6 +37,9 @@ import android.widget.ScrollView;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
+import androidx.core.content.ContextCompat;
+import android.text.method.PasswordTransformationMethod;
+import android.view.WindowManager;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -53,15 +56,13 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /** Android adaptation of the FreeTunnel desktop interface. */
 public final class MainActivity extends Activity {
     private static final int PICK_CONFIG = 21;
     private static final int PREPARE_VPN = 22;
     private static final String PREFS = "freetunnel";
-    private final String[] tabNames = {"Главная", "Конфиги", "Маршруты", "Настройки", "Журнал"};
+    private String[] tabNames;
     private final int[] tabIcons = {R.drawable.logo, R.drawable.ic_servers, R.drawable.ic_network,
             R.drawable.ic_settings, R.drawable.ic_log};
     private SharedPreferences prefs;
@@ -75,9 +76,10 @@ public final class MainActivity extends Activity {
     private int vpnState;
     private String pendingConfig;
     private boolean receiverRegistered;
+    private boolean storageFailed;
     private final BroadcastReceiver vpnReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
-            vpnState = intent.getIntExtra(FreeTunnelVpnService.EXTRA_STATE, 0);
+            vpnState = FreeTunnelVpnService.state(context);
             if (page == 0) render();
             QuickTileService.refresh(context);
         }
@@ -91,30 +93,32 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        tabNames = new String[] {getString(R.string.text_home), getString(R.string.text_configurations), getString(R.string.text_routing), getString(R.string.text_settings), getString(R.string.text_log)};
         prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         dark = prefs.getBoolean("dark", true);
         activeIndex = prefs.getInt("active", 0);
         vpnState = FreeTunnelVpnService.state(this);
         loadConfigs();
         render();
-        handleIncomingIntent(getIntent());
-        if (getIntent() != null && getIntent().getBooleanExtra("tile_connect", false)) {
-            getIntent().removeExtra("tile_connect");
-            root.post(this::connect);
-        } else if (prefs.getBoolean("auto_connect", false) && vpnState == 0 && !configs.isEmpty()) {
-            root.post(this::connect);
+        if (state == null) handleIncomingIntent(getIntent());
+        if (state == null && prefs.getBoolean("auto_connect", false) && vpnState == 0
+                && !configs.isEmpty() && !Intent.ACTION_VIEW.equals(getIntent().getAction())) {
+            root.post(() -> { if (FreeTunnelVpnService.state(this) == 0) connect(); });
         }
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) requestPermissions(new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 23);
+
     }
 
     @Override protected void onResume() {
         super.onResume();
         if (!receiverRegistered) {
             IntentFilter filter = new IntentFilter(FreeTunnelVpnService.ACTION_STATE);
-            if (Build.VERSION.SDK_INT >= 33) registerReceiver(vpnReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
-            else registerReceiver(vpnReceiver, filter);
+            ContextCompat.registerReceiver(this, vpnReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
             receiverRegistered = true;
         }
         vpnState = FreeTunnelVpnService.state(this);
+        if (page == 0) render();
     }
 
     @Override protected void onPause() {
@@ -154,8 +158,8 @@ public final class MainActivity extends Activity {
         d.setCornerRadius(dp(radius));
         return d;
     }
-    private LinearLayout column() { LinearLayout l = new LinearLayout(this); l.setOrientation(1); return l; }
-    private LinearLayout row() { LinearLayout l = new LinearLayout(this); l.setOrientation(0); l.setGravity(Gravity.CENTER_VERTICAL); return l; }
+    private LinearLayout column() { LinearLayout l = new LinearLayout(this); l.setOrientation(LinearLayout.VERTICAL); return l; }
+    private LinearLayout row() { LinearLayout l = new LinearLayout(this); l.setOrientation(LinearLayout.HORIZONTAL); l.setGravity(Gravity.CENTER_VERTICAL); return l; }
     private LinearLayout.LayoutParams lp(int w, int h) { return new LinearLayout.LayoutParams(w < 0 ? w : dp(w), h < 0 ? h : dp(h)); }
     private TextView label(String value, int size, int color, boolean bold) {
         TextView t = new TextView(this);
@@ -172,7 +176,7 @@ public final class MainActivity extends Activity {
         c.setBackground(shape(surface(), 14)); return c;
     }
     private void section(LinearLayout p, String title) {
-        gap(p, 18); TextView t = label(title.toUpperCase(), 11, faint(), true);
+        gap(p, 18); TextView t = label(title.toUpperCase(java.util.Locale.getDefault()), 11, faint(), true);
         p.addView(t, lp(-1, 28));
     }
     private void toast(String text) { Toast.makeText(this, text, Toast.LENGTH_LONG).show(); }
@@ -191,7 +195,7 @@ public final class MainActivity extends Activity {
         root = column(); root.setBackgroundColor(bg());
         root.setOnApplyWindowInsetsListener((view, insets) -> {
             if (Build.VERSION.SDK_INT >= 30) {
-                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
+                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
                 root.setPadding(0, bars.top, 0, bars.bottom);
             } else {
                 root.setPadding(0, insets.getSystemWindowInsetTop(), 0, insets.getSystemWindowInsetBottom());
@@ -240,10 +244,10 @@ public final class MainActivity extends Activity {
         LinearLayout hero = column(); hero.setGravity(Gravity.CENTER_HORIZONTAL);
         ImageView logo = new ImageView(this); logo.setImageResource(R.drawable.logo); logo.setAlpha(0.5f);
         hero.addView(logo, lp(132, 132));
-        logo.setContentDescription("Подключить FreeTunnel");
+        logo.setContentDescription(isVpnActive() ? getString(R.string.text_disconnect_freetunnel) : getString(R.string.text_connect_freetunnel));
         logo.setOnClickListener(v -> connect());
         gap(hero, 22);
-        String name = configs.isEmpty() ? "Добавить конфиг" : configs.get(Math.min(activeIndex, configs.size() - 1)).name + "  ▾";
+        String name = configs.isEmpty() ? getString(R.string.text_add_configuration) : configs.get(Math.min(activeIndex, configs.size() - 1)).name + "  ▾";
         TextView selected = label(name, 15, textColor(), true); selected.setGravity(Gravity.CENTER);
         hero.addView(selected, lp(-1, 28));
         selected.setOnClickListener(v -> {
@@ -252,35 +256,29 @@ public final class MainActivity extends Activity {
         TextView status = label(connectionCaption(), 13, vpnState == 2 ? success() : dim(), false);
         status.setGravity(Gravity.CENTER);
         hero.addView(status, lp(-1, 30));
-        Button toggle = button(isVpnActive() ? "Отключить" : "Подключить", isVpnActive());
-        toggle.setContentDescription(isVpnActive() ? "Отключить VPN" : "Подключить VPN");
+        Button toggle = button(isVpnActive() ? getString(R.string.text_disconnect) : getString(R.string.text_connect), isVpnActive());
+        toggle.setContentDescription(isVpnActive() ? getString(R.string.text_disconnect_vpn) : getString(R.string.text_connect_vpn));
         toggle.setOnClickListener(v -> connect());
         hero.addView(toggle, lp(178, 44));
         FrameLayout.LayoutParams heroLp = new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER);
         heroLp.bottomMargin = dp(34);
         stage.addView(hero, heroLp);
-        LinearLayout speeds = row(); speeds.setGravity(Gravity.CENTER);
-        speeds.addView(speedCard("↓", "— MB/s", success()), lp(116, 44));
-        gapHorizontal(speeds, 12);
-        speeds.addView(speedCard("↑", "— MB/s", dim()), lp(116, 44));
-        FrameLayout.LayoutParams speedLp = new FrameLayout.LayoutParams(-1, dp(44), Gravity.BOTTOM);
-        speedLp.bottomMargin = dp(44);
-        stage.addView(speeds, speedLp);
     }
     private void gapHorizontal(LinearLayout p, int size) { p.addView(new View(this), lp(size, 1)); }
-    private LinearLayout speedCard(String arrow, String speed, int color) {
-        LinearLayout c = row(); c.setGravity(Gravity.CENTER); c.setBackground(shape(tile(), 8));
-        TextView a = label(arrow, 14, color, false); c.addView(a, lp(20, -1));
-        c.addView(label(speed, 14, textColor(), true), lp(-2, -1)); return c;
-    }
     private void connect() {
+        vpnState = FreeTunnelVpnService.state(this);
         if (isVpnActive()) {
             FreeTunnelVpnService.stop(this);
             return;
         }
-        if (configs.isEmpty()) { page = 1; render(); toast("Сначала добавьте конфиг"); return; }
+        if (configs.isEmpty()) { page = 1; render(); toast(getString(R.string.text_add_a_configuration_first)); return; }
         Config config = configs.get(Math.max(0, Math.min(activeIndex, configs.size() - 1)));
-        pendingConfig = effectiveConfig(config.toml);
+        try {
+            RoutingConfig.Plan plan = RoutingConfig.prepare(this, config.toml);
+            NativeConfigValidator.INSTANCE.validate(plan.getToml());
+            if (plan.getWarning() != null) toast(getString(plan.getWarning()));
+            pendingConfig = config.toml;
+        } catch (Exception e) { toast(getString(R.string.text_invalid_vpn_configuration_check_the_server_settings)); return; }
         Intent prepare = VpnService.prepare(this);
         if (prepare != null) startActivityForResult(prepare, PREPARE_VPN);
         else startVpnWithPendingConfig();
@@ -292,10 +290,10 @@ public final class MainActivity extends Activity {
 
     private String connectionCaption() {
         switch (vpnState) {
-            case 1: return "Подключение…";
-            case 2: return "Подключено";
-            case 3: case 4: case 5: return "Восстановление соединения…";
-            default: return "Отключено";
+            case 1: return getString(R.string.text_connecting);
+            case 2: return getString(R.string.text_connected);
+            case 3: case 4: case 5: return getString(R.string.text_recovering_connection);
+            default: return getString(R.string.text_disconnected);
         }
     }
 
@@ -316,61 +314,32 @@ public final class MainActivity extends Activity {
             return;
         }
         Config config = configs.get(Math.max(0, Math.min(activeIndex, configs.size() - 1)));
-        FreeTunnelVpnService.restart(this, effectiveConfig(config.toml));
+        try {
+            RoutingConfig.Plan plan = RoutingConfig.prepare(this, config.toml);
+            NativeConfigValidator.INSTANCE.validate(plan.getToml());
+            if (plan.getWarning() != null) toast(getString(plan.getWarning()));
+            FreeTunnelVpnService.restart(this, config.toml);
+        } catch (Exception e) { toast(getString(R.string.text_settings_were_not_applied_check_the_configuration)); return; }
         vpnState = 1;
-        toast("Применяю настройки маршрутизации");
+        toast(getString(R.string.text_applying_routing_settings));
         QuickTileService.refresh(this);
     }
 
     private String effectiveConfig(String source) {
-        boolean splitEnabled = prefs.getBoolean("split_enabled", false);
-        boolean selective = splitEnabled && prefs.getBoolean("through", false);
-        Set<String> domains = splitEnabled ? prefs.getStringSet("domains", Collections.emptySet()) : Collections.emptySet();
-        StringBuilder out = new StringBuilder();
-        boolean rootSectionEnded = false;
-        boolean settingsWritten = false;
-        String[] lines = source.replace("\r\n", "\n").split("\n", -1);
-        for (String line : lines) {
-            String trimmed = line.trim();
-            boolean section = trimmed.startsWith("[") && trimmed.endsWith("]");
-            if (section && !settingsWritten) {
-                appendRoutingSettings(out, selective, domains);
-                settingsWritten = true;
-            }
-            if (!rootSectionEnded && section) rootSectionEnded = true;
-            if (!rootSectionEnded && trimmed.matches("(?i)^(vpn_mode|exclusions)\\s*=.*")) {
-                continue;
-            }
-            out.append(line).append('\n');
-        }
-        if (!settingsWritten) appendRoutingSettings(out, selective, domains);
-        return out.toString();
-    }
-
-    private void appendRoutingSettings(StringBuilder out, boolean selective, Set<String> domains) {
-        out.append("vpn_mode = ").append(selective ? "\"selective\"" : "\"general\"").append('\n');
-        out.append("exclusions = [");
-        boolean first = true;
-        for (String domain : sorted(domains)) {
-            if (!domain.matches("[a-zA-Z0-9.*:_/\\-]+")) continue;
-            if (!first) out.append(", ");
-            out.append('"').append(domain).append('"');
-            first = false;
-        }
-        out.append("]\n");
+        return RoutingConfig.prepare(this, source).getToml();
     }
 
     private void configs(LinearLayout body) {
         LinearLayout header = row(); header.setGravity(Gravity.CENTER);
-        FrameLayout add = configHeaderButton(R.drawable.ic_add, "Добавить конфиг");
+        FrameLayout add = configHeaderButton(R.drawable.ic_add, getString(R.string.text_add_configuration));
         add.setOnClickListener(v -> addMenu()); header.addView(add, lp(40, 32));
         gapHorizontal(header, 12);
-        FrameLayout ping = configHeaderButton(R.drawable.ic_ping, "Проверить пинг конфигов");
+        FrameLayout ping = configHeaderButton(R.drawable.ic_ping, getString(R.string.text_check_server_tcp_latency));
         ping.setOnClickListener(v -> pingConfigs()); header.addView(ping, lp(40, 32));
         body.addView(header, lp(-1, 44));
         if (configs.isEmpty()) {
             body.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1));
-            TextView hint = label("Добавить конфиг", 15, textColor(), true); hint.setGravity(Gravity.CENTER);
+            TextView hint = label(getString(R.string.text_add_configuration), 15, textColor(), true); hint.setGravity(Gravity.CENTER);
             hint.setOnClickListener(v -> addMenu()); body.addView(hint, lp(-1, 40));
             body.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1));
         }
@@ -378,7 +347,7 @@ public final class MainActivity extends Activity {
             final int index = i; Config config = configs.get(i); gap(body, 12);
             LinearLayout c = card(); LinearLayout top = row();
             TextView name = label(config.name, 16, textColor(), true); top.addView(name, new LinearLayout.LayoutParams(0, dp(35), 1));
-            if (i == activeIndex) top.addView(label("●  выбран", 12, success(), false), lp(-2, 35));
+            if (i == activeIndex) top.addView(label(getString(R.string.text_selected), 12, success(), false), lp(-2, 35));
             c.addView(top, lp(-1, 36));
             LinearLayout meta = row();
             meta.addView(label("TrustTunnel  ·  TOML", 12, dim(), false), new LinearLayout.LayoutParams(0, dp(25), 1));
@@ -386,9 +355,9 @@ public final class MainActivity extends Activity {
             if (pingText != null) meta.addView(label(pingText, 12, dim(), false), lp(-2, 25));
             c.addView(meta, lp(-1, 25));
             LinearLayout actions = row();
-            Button select = button("Выбрать", false); select.setOnClickListener(v -> { activeIndex = index; saveConfigs(); applyCurrentRules(); render(); });
+            Button select = button(getString(R.string.text_select), false); select.setOnClickListener(v -> { activeIndex = index; saveConfigs(); applyCurrentRules(); render(); });
             actions.addView(select, new LinearLayout.LayoutParams(0, dp(38), 1)); gapHorizontal(actions, 8);
-            Button edit = button("Изменить", false); edit.setOnClickListener(v -> editConfig(index));
+            Button edit = button(getString(R.string.text_edit), false); edit.setOnClickListener(v -> editConfig(index));
             actions.addView(edit, new LinearLayout.LayoutParams(0, dp(38), 1)); gapHorizontal(actions, 8);
             Button remove = button("✕", false); remove.setOnClickListener(v -> confirmRemove(index));
             actions.addView(remove, lp(42, 38)); c.addView(actions, lp(-1, 38));
@@ -406,7 +375,7 @@ public final class MainActivity extends Activity {
         return box;
     }
     private void pingConfigs() {
-        if (configs.isEmpty()) { toast("Сначала добавьте конфиг"); return; }
+        if (configs.isEmpty()) { toast(getString(R.string.text_add_a_configuration_first)); return; }
         if (pingRunning) return;
         pingRunning = true;
         List<Config> snapshot = new ArrayList<>(configs);
@@ -424,99 +393,127 @@ public final class MainActivity extends Activity {
         }, "freetunnel-ping").start();
     }
     private String tcpPing(String toml) {
-        Matcher section = Pattern.compile("(?ms)^[ \\t]*\\[endpoint\\][ \\t]*\\r?\\n(.*?)(?=^[ \\t]*\\[|\\z)").matcher(toml);
-        if (!section.find()) return "нет адреса";
-        Matcher address = Pattern.compile("(?m)^\\s*addresses\\s*=\\s*\\[\\s*[\"']([^\"']+)[\"']").matcher(section.group(1));
-        if (!address.find()) return "нет адреса";
-        String target = address.group(1);
+        String target;
+        try { target = RoutingConfig.validate(toml).getArray("endpoint.addresses").getString(0); }
+        catch (Exception e) { return getString(R.string.text_no_address); }
         int separator = target.lastIndexOf(':');
-        if (separator <= 0) return "нет порта";
+        if (separator <= 0) return getString(R.string.text_no_port);
         String host = target.substring(0, separator);
         if (host.startsWith("[") && host.endsWith("]")) host = host.substring(1, host.length() - 1);
         try {
             int port = Integer.parseInt(target.substring(separator + 1));
-            if (port < 1 || port > 65535) return "нет порта";
+            if (port < 1 || port > 65535) return getString(R.string.text_no_port);
             long start = SystemClock.elapsedRealtime();
             try (Socket socket = new Socket()) { socket.connect(new InetSocketAddress(host, port), 2500); }
-            return (SystemClock.elapsedRealtime() - start) + " мс";
-        } catch (Exception e) { return "недоступен"; }
+            return (SystemClock.elapsedRealtime() - start) + getString(R.string.text_ms);
+        } catch (Exception e) { return getString(R.string.text_unreachable); }
     }
     private void addMenu() {
-        new AlertDialog.Builder(this).setTitle("Добавить конфиг")
-                .setItems(new String[]{"Импортировать TOML-файл", "Вставить из буфера", "Создать вручную"}, (d, which) -> {
+        if (storageFailed) { toast(getString(R.string.text_storage_is_unavailable_saved_data_has_been_preserved)); return; }
+        new AlertDialog.Builder(this).setTitle(getString(R.string.text_add_configuration))
+                .setItems(new String[]{getString(R.string.text_import_toml_file), getString(R.string.text_paste_from_clipboard), getString(R.string.text_create_manually)}, (d, which) -> {
                     if (which == 0) {
                         Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);
                         startActivityForResult(pick, PICK_CONFIG);
                     } else if (which == 1) {
                         ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
                         ClipData clip = cm.getPrimaryClip();
-                        if (clip == null || clip.getItemCount() == 0) { toast("Буфер обмена пуст"); return; }
+                        if (clip == null || clip.getItemCount() == 0) { toast(getString(R.string.text_clipboard_is_empty)); return; }
                         CharSequence value = clip.getItemAt(0).coerceToText(this);
                         String text = value == null ? "" : value.toString().trim();
                         if (DeepLinkImport.looksLikeLink(text)) importDeepLink(text);
-                        else importToml("Из буфера", text);
+                        else importToml(getString(R.string.text_from_clipboard), text);
                     } else editConfig(-1);
                 }).show();
     }
     private void importDeepLink(String link) {
         final DeepLinkImport.Imported imported;
         try { imported = DeepLinkImport.parse(link); }
-        catch (DeepLinkImport.ParseException e) { toast(e.getMessage()); return; }
+        catch (DeepLinkImport.ParseException e) { toast(getString(e.messageResource)); return; }
 
-        String message = "Добавить конфиг «" + imported.name + "»?\nСервер: " + imported.hostname;
-        if (imported.skipVerification)
-            message += "\nПроверка сертификата сервера отключена в этой ссылке.";
-        new AlertDialog.Builder(this).setTitle("Импорт TrustTunnel")
-                .setMessage(message).setNegativeButton("Отмена", null)
-                .setPositiveButton("Добавить", (dialog, which) -> {
-                    configs.add(new Config(imported.name, imported.toml));
+        confirmImport(imported.name, imported.toml);
+    }
+    private boolean validateForSave(String source) {
+        if (storageFailed) { toast(getString(R.string.text_storage_is_unavailable_data_has_not_been_changed)); return false; }
+        try {
+            RoutingConfig.validate(source);
+            NativeConfigValidator.INSTANCE.validate(effectiveConfig(source));
+            return true;
+        } catch (Exception e) { toast(getString(R.string.text_invalid_toml_or_server_settings_configuration_was_no)); return false; }
+    }
+    private void importToml(String name, String toml) {
+        confirmImport(name, stripBom(toml));
+    }
+    private void confirmImport(String name, String source) {
+        if (!validateForSave(source)) return;
+        org.tomlj.TomlTable parsed = RoutingConfig.validate(source);
+        String message = getString(R.string.text_add_configuration_36) + name + getString(R.string.text_nserver) + parsed.getString("endpoint.hostname");
+        if (Boolean.TRUE.equals(parsed.getBoolean("endpoint.skip_verification")))
+            message += getString(R.string.text_nserver_certificate_verification_is_disabled);
+        for (Config config : configs) {
+            if (config.name.equals(name) || config.toml.equals(source)) {
+                message += getString(R.string.text_nthis_configuration_or_name_already_exists_a_separat); break;
+            }
+        }
+        if (name.codePoints().anyMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.LATIN)
+                && name.codePoints().anyMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.CYRILLIC))
+            message += getString(R.string.text_nthe_name_mixes_similar_characters_from_different_al);
+        new AlertDialog.Builder(this).setTitle(getString(R.string.text_import_trusttunnel)).setMessage(message)
+                .setNegativeButton(getString(R.string.text_cancel), null).setPositiveButton(getString(R.string.text_add), (dialog, which) -> {
+                    configs.add(new Config(name, source));
                     if (configs.size() == 1) activeIndex = 0;
                     saveConfigs(); page = 1; render();
                 }).show();
-    }
-    private void importToml(String name, String toml) {
-        toml = stripBom(toml);
-        if (!toml.contains("[endpoint]") || !toml.contains("[listener.tun]")) {
-            toast("Ожидается TOML с секциями [endpoint] и [listener.tun]"); return;
-        }
-        configs.add(new Config(name, toml)); if (configs.size() == 1) activeIndex = 0;
-        saveConfigs(); render();
     }
     private static String stripBom(String toml) {
         return toml.startsWith("\uFEFF") ? toml.substring(1) : toml;
     }
     private void editConfig(int index) {
+        if (storageFailed) { toast(getString(R.string.text_storage_is_unavailable_data_has_not_been_changed)); return; }
+        getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         LinearLayout form = column(); form.setPadding(dp(20), dp(5), dp(20), 0);
         EditText name = new EditText(this); name.setSingleLine(true); name.setTextColor(textColor());
-        name.setHint("Имя конфига"); name.setHintTextColor(faint());
+        name.setHint(getString(R.string.text_configuration_name)); name.setHintTextColor(faint());
         EditText raw = new EditText(this); raw.setTextColor(textColor()); raw.setHintTextColor(faint());
-        raw.setHint("Вставьте полный TrustTunnel TOML"); raw.setMinLines(8); raw.setGravity(Gravity.TOP);
+        raw.setHint(getString(R.string.text_paste_complete_trusttunnel_toml)); raw.setMinLines(8); raw.setGravity(Gravity.TOP);
         raw.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        raw.setTransformationMethod(PasswordTransformationMethod.getInstance());
+        CheckBox show = new CheckBox(this); show.setText(getString(R.string.text_show_toml_and_password)); show.setTextColor(textColor());
+        show.setOnCheckedChangeListener((b, checked) -> raw.setTransformationMethod(checked ? null : PasswordTransformationMethod.getInstance()));
+        form.addView(show, lp(-1, 48));
         if (index >= 0) { name.setText(configs.get(index).name); raw.setText(configs.get(index).toml); }
         form.addView(name, lp(-1, 54)); form.addView(raw, lp(-1, 230));
         ScrollView scroll = new ScrollView(this); scroll.addView(form);
-        new AlertDialog.Builder(this).setTitle(index < 0 ? "Новый конфиг" : "Изменить конфиг")
-                .setView(scroll).setNegativeButton("Отмена", null)
-                .setPositiveButton("Сохранить", (dialog, which) -> {
+        AlertDialog editor = new AlertDialog.Builder(this).setTitle(index < 0 ? getString(R.string.text_new_configuration) : getString(R.string.text_edit_configuration))
+                .setView(scroll).setNegativeButton(getString(R.string.text_cancel), null)
+                .setPositiveButton(getString(R.string.text_save), null).create();
+        editor.setOnDismissListener(d -> getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE));
+        editor.show();
+        editor.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                     String n = name.getText().toString().trim(), t = stripBom(raw.getText().toString().trim());
-                    if (n.isEmpty()) { toast("Укажите имя конфига"); return; }
-                    if (!t.contains("[endpoint]") || !t.contains("[listener.tun]")) { toast("Нужен полный TrustTunnel TOML"); return; }
+                    if (n.isEmpty()) { toast(getString(R.string.text_enter_a_configuration_name)); return; }
+                    if (!validateForSave(t)) return;
                     if (index < 0) configs.add(new Config(n, t)); else configs.set(index, new Config(n, t));
-                    saveConfigs(); render();
-                }).show();
+                    saveConfigs(); applyCurrentRules(); render(); editor.dismiss();
+                });
     }
     private void confirmRemove(int index) {
-        new AlertDialog.Builder(this).setTitle("Удалить конфиг?").setMessage(configs.get(index).name)
-                .setNegativeButton("Отмена", null).setPositiveButton("Удалить", (d, w) -> {
-                    configs.remove(index); activeIndex = Math.max(0, Math.min(activeIndex, configs.size() - 1));
-                    saveConfigs(); render();
+        if (storageFailed) return;
+        new AlertDialog.Builder(this).setTitle(getString(R.string.text_delete_configuration)).setMessage(configs.get(index).name)
+                .setNegativeButton(getString(R.string.text_cancel), null).setPositiveButton(getString(R.string.text_delete), (d, w) -> {
+                    boolean activeRemoved = index == activeIndex;
+                    configs.remove(index);
+                    if (index < activeIndex) activeIndex--;
+                    activeIndex = Math.max(0, Math.min(activeIndex, configs.size() - 1));
+                    saveConfigs(); if (activeRemoved) applyCurrentRules(); render();
                 }).show();
     }
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == PREPARE_VPN) {
             if (resultCode == RESULT_OK) startVpnWithPendingConfig();
-            else { pendingConfig = null; toast("Разрешение на VPN не выдано"); }
+            else { pendingConfig = null; toast(getString(R.string.text_vpn_permission_was_not_granted)); }
             return;
         }
         if (requestCode != PICK_CONFIG || resultCode != RESULT_OK || data == null) return;
@@ -524,22 +521,22 @@ public final class MainActivity extends Activity {
         try (InputStream input = getContentResolver().openInputStream(uri); ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             if (input == null) return;
             byte[] bytes = new byte[8192]; int n; int total = 0;
-            while ((n = input.read(bytes)) != -1) { total += n; if (total > 1024 * 1024) { toast("Файл слишком большой"); return; } out.write(bytes, 0, n); }
+            while ((n = input.read(bytes)) != -1) { total += n; if (total > 1024 * 1024) { toast(getString(R.string.text_file_is_too_large)); return; } out.write(bytes, 0, n); }
             String name = null;
             try (Cursor cursor = getContentResolver().query(uri,
                     new String[]{OpenableColumns.DISPLAY_NAME}, null, null, null)) {
                 if (cursor != null && cursor.moveToFirst()) name = cursor.getString(0);
             } catch (Exception ignored) { }
             if (name == null || name.isEmpty()) name = uri.getLastPathSegment();
-            if (name == null || name.isEmpty()) name = "Конфиг";
+            if (name == null || name.isEmpty()) name = getString(R.string.text_configuration);
             int slash = name.lastIndexOf('/'); if (slash >= 0) name = name.substring(slash + 1);
             importToml(name, out.toString(StandardCharsets.UTF_8.name()));
-        } catch (Exception e) { toast("Не удалось открыть файл"); }
+        } catch (Exception e) { toast(getString(R.string.text_could_not_open_file)); }
     }
 
     private void split(LinearLayout body) {
         LinearLayout enabled = row();
-        enabled.addView(label("Раздельное туннелирование", 14, textColor(), false),
+        enabled.addView(label(getString(R.string.text_split_tunnelling), 14, textColor(), false),
                 new LinearLayout.LayoutParams(0, dp(42), 1));
         Switch splitSwitch = new Switch(this); splitSwitch.setChecked(prefs.getBoolean("split_enabled", false));
         styleSwitch(splitSwitch);
@@ -549,26 +546,22 @@ public final class MainActivity extends Activity {
         });
         enabled.addView(splitSwitch); body.addView(enabled, lp(-1, 42));
         boolean through = prefs.getBoolean("through", false);
-        LinearLayout mode = row(); mode.addView(label("Режим", 14, textColor(), false),
+        LinearLayout mode = row(); mode.addView(label(getString(R.string.text_mode), 14, textColor(), false),
                 new LinearLayout.LayoutParams(0, dp(42), 1));
-        TextView modeValue = label(through ? "Через VPN  ▾" : "В обход VPN  ▾", 14, dim(), false);
+        TextView modeValue = label(through ? getString(R.string.text_through_vpn) : getString(R.string.text_bypass_vpn), 14, dim(), false);
         mode.addView(modeValue, lp(-2, 42));
-        mode.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("Режим")
-                .setItems(new String[]{"В обход VPN", "Через VPN"}, (dialog, which) -> {
+        mode.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle(getString(R.string.text_mode))
+                .setItems(new String[]{getString(R.string.text_bypass_vpn_61), getString(R.string.text_through_vpn_62)}, (dialog, which) -> {
                     prefs.edit().putBoolean("through", which == 1).apply(); applyCurrentRules(); render();
                 }).show());
         body.addView(mode, lp(-1, 42));
-        section(body, "Профиль");
-        LinearLayout profiles = row();
-        TextView defaultChip = label("По умолчанию", 13, dark ? bg() : Color.WHITE, false);
-        defaultChip.setGravity(Gravity.CENTER); defaultChip.setBackground(shape(accent(), 14));
-        profiles.addView(defaultChip, lp(124, 28));
-        body.addView(profiles, lp(-1, 30));
+        TextView explanation = label(getString(R.string.text_for_through_vpn_choose_applications_or_addresses_sel), 12, dim(), false);
+        body.addView(explanation, lp(-1, 66));
         gap(body, 14);
         LinearLayout domainHeader = row();
-        domainHeader.addView(label(through ? "ПРАВИЛА — ЧЕРЕЗ VPN" : "ПРАВИЛА — В ОБХОД VPN", 11, faint(), true),
+        domainHeader.addView(label(through ? getString(R.string.text_rules_through_vpn) : getString(R.string.text_rules_bypass_vpn), 11, faint(), true),
                 new LinearLayout.LayoutParams(0, dp(29), 1));
-        TextView clearDomains = label("Очистить", 12, accent(), false);
+        TextView clearDomains = label(getString(R.string.text_clear), 12, accent(), false);
         clearDomains.setOnClickListener(v -> { prefs.edit().remove("domains").apply(); applyCurrentRules(); render(); });
         domainHeader.addView(clearDomains, lp(-2, 29)); body.addView(domainHeader, lp(-1, 29));
         Set<String> rules = new HashSet<>(prefs.getStringSet("domains", Collections.emptySet()));
@@ -584,7 +577,7 @@ public final class MainActivity extends Activity {
         body.addView(domains, lp(-1, -2));
         EditText domainInput = new EditText(this); domainInput.setSingleLine(true); domainInput.setTextSize(13);
         domainInput.setTextColor(textColor()); domainInput.setHintTextColor(faint());
-        domainInput.setHint("Домены или IP через запятую");
+        domainInput.setHint(getString(R.string.text_domains_or_ips_space_comma));
         domainInput.setPadding(dp(12), 0, dp(12), 0);
         domainInput.setBackground(shape(input(), 8));
         domainInput.setOnEditorActionListener((field, action, event) -> {
@@ -593,9 +586,9 @@ public final class MainActivity extends Activity {
         body.addView(domainInput, lp(-1, 36));
         gap(body, 15);
         LinearLayout appHeader = row();
-        appHeader.addView(label(through ? "ПРИЛОЖЕНИЯ — ЧЕРЕЗ VPN" : "ПРИЛОЖЕНИЯ — В ОБХОД VPN", 11, faint(), true),
+        appHeader.addView(label(through ? getString(R.string.text_applications_through_vpn) : getString(R.string.text_applications_bypass_vpn), 11, faint(), true),
                 new LinearLayout.LayoutParams(0, dp(29), 1));
-        TextView chooseLink = label("Выбрать…", 12, accent(), false);
+        TextView chooseLink = label(getString(R.string.text_choose), 12, accent(), false);
         chooseLink.setOnClickListener(v -> appPicker());
         appHeader.addView(chooseLink, lp(-2, 29)); body.addView(appHeader, lp(-1, 29));
         LinearLayout apps = column();
@@ -619,31 +612,18 @@ public final class MainActivity extends Activity {
             } catch (PackageManager.NameNotFoundException ignored) { }
         }
         body.addView(apps, lp(-1, -2));
-        TextView addApp = label("Выберите установленные приложения", 13, faint(), false);
+        TextView addApp = label(getString(R.string.text_choose_installed_applications), 13, faint(), false);
         addApp.setPadding(dp(12), 0, dp(12), 0); addApp.setBackground(shape(input(), 8));
         addApp.setOnClickListener(v -> appPicker()); body.addView(addApp, lp(-1, 36));
     }
     private void addDomains(String inputText) {
         Set<String> rules = new HashSet<>(prefs.getStringSet("domains", Collections.emptySet()));
-        boolean changed = false;
-        for (String part : inputText.split(",")) {
-            String rule = part.trim().toLowerCase();
-            if (!rule.isEmpty() && rule.matches("[a-z0-9.*:_/\\-]+")) changed |= rules.add(rule);
-        }
-        if (changed) { prefs.edit().putStringSet("domains", rules).apply(); applyCurrentRules(); render(); }
+        try {
+            for (String rule : SplitRules.INSTANCE.normalize(inputText, false)) rules.add(rule);
+        } catch (IllegalArgumentException e) { toast(getString(R.string.invalid_routing_rule)); return; }
+        prefs.edit().putStringSet("domains", rules).apply(); applyCurrentRules(); render();
     }
     private List<String> sorted(Set<String> set) { List<String> list = new ArrayList<>(set); Collections.sort(list); return list; }
-    private void addDomain() {
-        EditText field = new EditText(this); field.setTextColor(textColor()); field.setHint("example.com или 192.0.2.0/24");
-        field.setHintTextColor(faint()); field.setSingleLine(true); field.setPadding(dp(22), 0, dp(22), 0);
-        new AlertDialog.Builder(this).setTitle("Добавить правило").setView(field).setNegativeButton("Отмена", null)
-                .setPositiveButton("Добавить", (d, w) -> {
-                    String value = field.getText().toString().trim().toLowerCase();
-                    if (!value.matches("[a-z0-9.*:_/\\-]+") || value.isEmpty()) { toast("Некорректный домен или адрес"); return; }
-                    Set<String> rules = new HashSet<>(prefs.getStringSet("domains", Collections.emptySet()));
-                    rules.add(value); prefs.edit().putStringSet("domains", rules).apply(); applyCurrentRules(); render();
-                }).show();
-    }
     private void appPicker() {
         PackageManager pm = getPackageManager();
         Intent launcher = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER);
@@ -662,40 +642,41 @@ public final class MainActivity extends Activity {
             list.addView(box, lp(-1, 52));
         }
         ScrollView scroll = new ScrollView(this); scroll.addView(list);
-        new AlertDialog.Builder(this).setTitle("Выбрать приложения").setView(scroll)
-                .setNegativeButton("Отмена", null).setPositiveButton("Готово", (d, w) -> {
+        new AlertDialog.Builder(this).setTitle(getString(R.string.text_choose_applications)).setView(scroll)
+                .setNegativeButton(getString(R.string.text_cancel), null).setPositiveButton(getString(R.string.text_done), (d, w) -> {
                     prefs.edit().putStringSet("apps", chosen).apply(); applyCurrentRules(); render();
                 }).show();
     }
 
     private void settings(LinearLayout body) {
-        section(body, "Общие");
+        section(body, getString(R.string.text_general));
         LinearLayout appearance = row();
-        appearance.addView(label("Тема", 14, textColor(), false), new LinearLayout.LayoutParams(0, dp(42), 1));
-        appearance.addView(label(dark ? "Тёмная  ▾" : "Светлая  ▾", 14, dim(), false), lp(-2, 42));
-        appearance.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle("Тема")
-                .setItems(new String[]{"Светлая", "Тёмная"}, (d, which) -> {
+        appearance.addView(label(getString(R.string.text_theme), 14, textColor(), false), new LinearLayout.LayoutParams(0, dp(42), 1));
+        appearance.addView(label(dark ? getString(R.string.text_dark) : getString(R.string.text_light), 14, dim(), false), lp(-2, 42));
+        appearance.setOnClickListener(v -> new AlertDialog.Builder(this).setTitle(getString(R.string.text_theme))
+                .setItems(new String[]{getString(R.string.text_light_78), getString(R.string.text_dark_79)}, (d, which) -> {
                     dark = which == 1; prefs.edit().putBoolean("dark", dark).apply(); render();
                 }).show());
         body.addView(appearance, lp(-1, 42)); separator(body);
-        addSwitch(body, "Подключать при запуске", "", "auto_connect", false);
-        section(body, "Безопасность");
+        addSwitch(body, getString(R.string.text_connect_on_launch), "", "auto_connect", false);
+        section(body, getString(R.string.text_security));
+        addSwitch(body, "Kill switch", getString(R.string.text_blocks_traffic_while_reconnecting), "killswitch", true);
         LinearLayout systemVpn = row();
-        systemVpn.addView(label("Параметры VPN Android", 14, textColor(), false),
+        systemVpn.addView(label(getString(R.string.text_android_vpn_settings), 14, textColor(), false),
                 new LinearLayout.LayoutParams(0, dp(48), 1));
-        systemVpn.addView(label("Открыть", 13, accent(), false), lp(-2, 48));
+        systemVpn.addView(label(getString(R.string.text_open), 13, accent(), false), lp(-2, 48));
         systemVpn.setOnClickListener(v -> {
             try { startActivity(new Intent(Settings.ACTION_VPN_SETTINGS)); }
-            catch (Exception e) { toast("Настройки VPN недоступны"); }
+            catch (Exception e) { toast(getString(R.string.text_vpn_settings_are_unavailable)); }
         });
         body.addView(systemVpn, lp(-1, 48));
-        body.addView(label("Постоянный VPN и блокировку без соединения можно включить в системных настройках.",
+        body.addView(label(getString(R.string.text_enable_always_on_vpn_and_block_connections_without_v),
                 12, dim(), false), lp(-1, 46));
-        section(body, "Журнал");
-        addSwitch(body, "Включить журнал", "", "logging", true);
-        section(body, "О приложении");
-        body.addView(label("FreeTunnel для Android", 14, textColor(), false), lp(-1, 42));
-        body.addView(label("Версия 0.3", 12, dim(), false), lp(-1, 28));
+        section(body, getString(R.string.text_log));
+        addSwitch(body, getString(R.string.text_enable_logging), "", "logging", true);
+        section(body, getString(R.string.text_about));
+        body.addView(label(getString(R.string.text_freetunnel_for_android), 14, textColor(), false), lp(-1, 42));
+        body.addView(label(getString(R.string.text_version) + BuildConfig.VERSION_NAME, 12, dim(), false), lp(-1, 28));
     }
     private void separator(LinearLayout parent) {
         View line = new View(this); line.setBackgroundColor(dark ? Color.parseColor("#2e2e2e") : Color.parseColor("#d0d0d0"));
@@ -708,7 +689,10 @@ public final class MainActivity extends Activity {
         r.addView(copy, new LinearLayout.LayoutParams(0, -2, 1));
         Switch sw = new Switch(this); sw.setChecked(prefs.getBoolean(key, initial));
         styleSwitch(sw);
-        sw.setOnCheckedChangeListener((v, enabled) -> prefs.edit().putBoolean(key, enabled).apply());
+        sw.setOnCheckedChangeListener((v, enabled) -> {
+            prefs.edit().putBoolean(key, enabled).apply();
+            if (key.equals("killswitch")) applyCurrentRules();
+        });
         r.addView(sw); parent.addView(r, lp(-1, subtitle.isEmpty() ? 42 : 56));
     }
     private void styleSwitch(Switch sw) {
@@ -721,9 +705,9 @@ public final class MainActivity extends Activity {
     }
     private void logs(LinearLayout body) {
         LinearLayout actions = row();
-        TextView clear = label("Очистить", 13, accent(), false);
+        TextView clear = label(getString(R.string.text_clear), 13, accent(), false);
         actions.addView(clear, new LinearLayout.LayoutParams(0, dp(34), 1));
-        TextView copy = label("Копировать", 13, accent(), false); actions.addView(copy, lp(-2, 34));
+        TextView copy = label(getString(R.string.text_copy), 13, accent(), false); actions.addView(copy, lp(-2, 34));
         clear.setOnClickListener(v -> {
             try { new java.io.File(getFilesDir(), "freetunnel.log").delete(); } catch (Exception ignored) { }
             render();
@@ -734,19 +718,19 @@ public final class MainActivity extends Activity {
                 String contents = file.exists() ? new String(java.nio.file.Files.readAllBytes(file.toPath()), StandardCharsets.UTF_8) : "";
                 ClipboardManager manager = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
                 manager.setPrimaryClip(ClipData.newPlainText("FreeTunnel log", contents));
-                toast(contents.isEmpty() ? "Журнал пуст" : "Журнал скопирован");
-            } catch (Exception e) { toast("Не удалось прочитать журнал"); }
+                toast(contents.isEmpty() ? getString(R.string.text_log_is_empty) : getString(R.string.text_log_copied));
+            } catch (Exception e) { toast(getString(R.string.text_could_not_read_log)); }
         });
         body.addView(actions, lp(-1, 34)); gap(body, 8);
         FrameLayout panel = new FrameLayout(this); panel.setBackground(shape(surface(), 8));
-        String logText = "Подключите VPN, чтобы увидеть журнал";
+        String logText = getString(R.string.text_connect_vpn_to_see_the_log);
         java.io.File logFile = new java.io.File(getFilesDir(), "freetunnel.log");
         if (logFile.exists()) {
             try { logText = new String(java.nio.file.Files.readAllBytes(logFile.toPath()), StandardCharsets.UTF_8).trim(); }
-            catch (Exception ignored) { logText = "Не удалось прочитать журнал"; }
+            catch (Exception ignored) { logText = getString(R.string.text_could_not_read_log); }
         }
         TextView placeholder = label(logText, 12, logFile.exists() ? dim() : faint(), false);
-        placeholder.setGravity(Gravity.TOP | Gravity.LEFT);
+        placeholder.setGravity(Gravity.TOP | Gravity.START);
         placeholder.setPadding(dp(12), dp(12), dp(12), dp(12));
         placeholder.setTextIsSelectable(true);
         panel.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
@@ -762,15 +746,29 @@ public final class MainActivity extends Activity {
             for (int i = 0; i < array.length(); i++) {
                 JSONObject o = array.getJSONObject(i); configs.add(new Config(o.getString("name"), o.getString("toml")));
             }
-        } catch (Exception ignored) { configs.clear(); }
+        } catch (Exception error) {
+            storageFailed = true;
+            configs.clear();
+            rootStorageWarning();
+        }
+        activeIndex = Math.max(0, Math.min(activeIndex, configs.size() - 1));
+    }
+    private void rootStorageWarning() {
+        new AlertDialog.Builder(this).setTitle(getString(R.string.text_configurations_are_unavailable))
+                .setMessage(getString(R.string.text_android_could_not_read_storage_saved_data_is_unchang))
+                .setPositiveButton(getString(R.string.text_ok), null).show();
     }
     private void saveConfigs() {
+        if (storageFailed) { toast(getString(R.string.text_storage_is_unavailable_data_has_not_been_changed)); return; }
         JSONArray array = new JSONArray();
         for (Config config : configs) {
             JSONObject o = new JSONObject();
             try { o.put("name", config.name); o.put("toml", config.toml); array.put(o); } catch (Exception ignored) { }
         }
-        if (!ConfigStore.write(prefs, array.toString())) toast("Не удалось защитить конфиг в хранилище Android");
+        if (!ConfigStore.write(prefs, array.toString())) {
+            storageFailed = true; toast(getString(R.string.text_could_not_save_configurations_data_on_disk_is_unchan));
+            configs.clear(); loadConfigs(); render(); return;
+        }
         prefs.edit().putInt("active", activeIndex).apply();
     }
 }
