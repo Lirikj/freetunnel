@@ -111,8 +111,8 @@ class FreeTunnelVpnService : VpnService() {
                 }
             }
         }
-        // Recreate an active service after process death using SavedProfile, while
-        // transient connection state still starts disconnected in the new process.
+        // Request framework-managed recreation using SavedProfile. Android controls
+        // restart scheduling; only system lockdown protects while no service runs.
         return if (intent?.action == ACTION_STOP) START_NOT_STICKY else START_STICKY
     }
 
