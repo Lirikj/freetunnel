@@ -33,7 +33,10 @@ Download a build for your platform from
 | **Linux** (Debian/Ubuntu/Pop!_OS) | `freetunnel-linux-x86_64.deb` |
 | **Linux** (portable, any distro) | `freetunnel-linux-x86_64.AppImage` |
 
-### Android preview
+### Android
+
+[Download Android 1.0.0](https://github.com/Lirikj/freetunnel/releases/tag/android-1.0.0)
+(APK signed with a permanent release certificate; AAB also available).
 
 The [`android/`](android/) project is a working Android VPN client using the
 checksum-pinned official TrustTunnel 1.1.7 adapter. It supports encrypted configs,
@@ -41,7 +44,7 @@ confirmed link/file import, domain and app routing, kill switch, and a Quick
 Settings tile. The Android README documents selective-routing fallbacks,
 system lockdown, build/signing instructions, and device-test limitations.
 
-Builds are **unsigned** (no code-signing certificates), so the OS may warn on first launch:
+Desktop builds are **unsigned** (no code-signing certificates), so the OS may warn on first launch:
 
 - **macOS**: right-click the app → **Open** (or
   `xattr -dr com.apple.quarantine /Applications/FreeTunnel.app`).

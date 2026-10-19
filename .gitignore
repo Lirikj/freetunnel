@@ -57,3 +57,11 @@ venv/
 .idea/
 .vscode/
 *.swp
+
+# Private Android signing material
+*.jks
+*.keystore
+*.p12
+*.pfx
+signing.json
+signing.properties

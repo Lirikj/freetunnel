@@ -1,9 +1,9 @@
 name: Android
 on:
   push:
-    paths: ['android/**', 'scripts/prepare-trusttunnel-android.sh', '.github/workflows/android.yml']
+    paths: ['android/**', 'scripts/prepare-trusttunnel-android.sh', 'scripts/build-android-release.sh', '.github/workflows/android.yml']
   pull_request:
-    paths: ['android/**', 'scripts/prepare-trusttunnel-android.sh', '.github/workflows/android.yml']
+    paths: ['android/**', 'scripts/prepare-trusttunnel-android.sh', 'scripts/build-android-release.sh', '.github/workflows/android.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -22,15 +22,17 @@ jobs:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - run: bash -n scripts/build-android-release.sh
       - run: scripts/prepare-trusttunnel-android.sh
-      - run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
+      - run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease :app:testReleaseUnitTest :app:lintRelease :app:bundleRelease
         working-directory: android
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: android-preview
+          name: android-ci-builds
           path: |
             android/app/build/outputs/apk/debug/*.apk
             android/app/build/outputs/apk/release/*.apk
+            android/app/build/outputs/bundle/release/*.aab
             android/app/build/reports/
   device-tests:
     runs-on: ubuntu-latest
@@ -46,6 +48,7 @@ jobs:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
           log-accepted-android-sdk-licenses: false
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - run: bash -n scripts/build-android-release.sh
       - run: scripts/prepare-trusttunnel-android.sh
       - name: Enable KVM
         run: |
