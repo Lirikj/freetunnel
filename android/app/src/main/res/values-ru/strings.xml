@@ -13,12 +13,10 @@
     <string name="text_disconnect_vpn">"Отключить VPN"</string>
     <string name="text_connect_vpn">"Подключить VPN"</string>
     <string name="text_add_a_configuration_first">"Сначала добавьте конфиг"</string>
-    <string name="text_invalid_vpn_configuration_check_the_server_settings">"Конфиг VPN недействителен. Проверьте настройки сервера."</string>
     <string name="text_connecting">"Подключение…"</string>
     <string name="text_connected">"Подключено"</string>
     <string name="text_recovering_connection">"Восстановление соединения…"</string>
     <string name="text_disconnected">"Отключено"</string>
-    <string name="text_settings_were_not_applied_check_the_configuration">"Настройки не применены: проверьте конфиг"</string>
     <string name="text_applying_routing_settings">"Применяю настройки маршрутизации"</string>
     <string name="text_check_server_tcp_latency">"Проверить пинг конфигов"</string>
     <string name="text_selected">"●  выбран"</string>
@@ -35,7 +33,6 @@
     <string name="text_clipboard_is_empty">"Буфер обмена пуст"</string>
     <string name="text_from_clipboard">"Из буфера"</string>
     <string name="text_storage_is_unavailable_data_has_not_been_changed">"Хранилище недоступно. Данные не изменены."</string>
-    <string name="text_invalid_toml_or_server_settings_configuration_was_no">"Неверный TOML или настройки сервера. Конфиг не сохранён."</string>
     <string name="text_add_configuration_36">"Добавить конфиг «"</string>
     <string name="text_nserver">"»?\nСервер: "</string>
     <string name="text_nserver_certificate_verification_is_disabled">"\nПроверка сертификата сервера отключена."</string>
@@ -105,7 +102,6 @@
     <string name="text_vpn_disconnected">"VPN отключён"</string>
     <string name="text_preparing_vpn">"Подготовка VPN"</string>
     <string name="text_vpn_settings_were_not_applied">"Настройки VPN не применены"</string>
-    <string name="text_the_previous_connection_is_still_active">"Предыдущее соединение сохранено"</string>
     <string name="text_could_not_start_vpn">"Не удалось запустить VPN"</string>
     <string name="text_connection_to_the_server_was_lost">"Соединение с сервером потеряно"</string>
     <string name="text_vpn_permission_was_revoked">"Разрешение VPN отозвано"</string>
@@ -124,4 +120,11 @@
     <string name="invalid_routing_rule">"Некорректный домен, IP или подсеть. Проверьте введённые правила."</string>
     <string name="vpn_failure_details">"%1$s. Трафик идёт без VPN, если системная блокировка без VPN выключена."</string>
     <string name="app_name">"FreeTunnel"</string>
+    <string name="vpn_traffic_blocked">Ошибка соединения — трафик VPN заблокирован</string>
+    <string name="vpn_reconnect">Переподключить</string>
+    <string name="validating_config">Проверка конфигурации…</string>
+    <string name="config_validation_error">Конфигурация отклонена: %1$s</string>
+    <string name="legacy_rules_removed">Удалены неподдерживаемые правила старой превью-версии. Проверьте маршрутизацию.</string>
+    <string name="imported_routing_rules">Правила выбранного конфига: %1$s. Они также влияют на маршрутизацию и включение полного VPN.</string>
+    <string name="lockdown_app_warning">Блокировка Android «Без VPN нет соединений» также отключит интернет приложениям, исключённым из VPN.</string>
 </resources>

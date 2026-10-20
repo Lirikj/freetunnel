@@ -26,6 +26,10 @@ TRUST="$(mktemp)"
 rm -f "$TRUST"
 trap 'rm -f "$CERT" "$TRUST"' EXIT
 "$KEYTOOL" -exportcert -keystore "$ANDROID_KEYSTORE_PATH" -alias "$ANDROID_KEY_ALIAS"   -storepass:env ANDROID_KEYSTORE_PASSWORD -file "$CERT"
+# Match the APK signer to the selected keystore, not merely any valid signature.
+EXPECTED="$(shasum -a 256 "$CERT" | awk '{print $1}')"
+ACTUAL="$("$APKSIGNER" verify --print-certs "$APK" | awk '/^Signer #[0-9]+ certificate SHA-256 digest:/ {print $NF}')"
+[[ "$ACTUAL" == "$EXPECTED" ]] || { echo "APK signer does not match the selected keystore" >&2; exit 1; }
 # Trust the owner's certificate for verifying this self-signed app-signing identity.
 "$KEYTOOL" -importcert -noprompt -alias release -file "$CERT" -keystore "$TRUST"   -storepass:env ANDROID_KEYSTORE_PASSWORD
 "$JARSIGNER" -verify -strict -keystore "$TRUST"   -storepass:env ANDROID_KEYSTORE_PASSWORD "$AAB"

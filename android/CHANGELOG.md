@@ -1,6 +1,13 @@
 # Android preview changes
 
-## Unreleased preview
+## Unreleased
+
+- Retain a blocking TUN after fatal native disconnect and post-establishment start failures when kill switch is enabled; add reconnect/disconnect notification actions.
+- Isolate native validation in a disposable private process and move UI validation off the main thread.
+- Fix permission-revocation cleanup, preserve state after rejected replacement, and reuse one network collector per service lifetime.
+- Migrate unsupported legacy destination rules, show imported rules, explain per-app lockdown, and require unlock for secure locked tiles.
+- Pin Android CI to Ubuntu 24.04, serialize superseded runs and limit push builds to main; verify release APK signer identity.
+ preview
 
 The preview includes import-only external links, private VPN consent, shared
 split-routing policy, process-local connection state, default kill switch,

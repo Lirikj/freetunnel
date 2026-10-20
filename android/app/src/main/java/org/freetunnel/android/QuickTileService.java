@@ -20,7 +20,7 @@ public final class QuickTileService extends TileService {
             if (Build.VERSION.SDK_INT >= 29) {
                 int state = FreeTunnelVpnService.state(this);
                 tile.setSubtitle(getString(state == 2 ? R.string.text_connected :
-                        state == 1 ? R.string.text_connecting : active ? R.string.text_recovering_connection : R.string.text_disconnected));
+                        state == 1 ? R.string.text_connecting : state == 6 ? R.string.vpn_traffic_blocked : active ? R.string.text_recovering_connection : R.string.text_disconnected));
             }
             tile.updateTile();
         }
@@ -28,6 +28,11 @@ public final class QuickTileService extends TileService {
 
     @Override public void onClick() {
         super.onClick();
+        if (isSecure() && isLocked()) { unlockAndRun(this::toggle); return; }
+        toggle();
+    }
+
+    private void toggle() {
         if (isActive()) {
             FreeTunnelVpnService.stop(this);
             if (getQsTile() == null) return;
@@ -60,7 +65,7 @@ public final class QuickTileService extends TileService {
 
     private boolean isActive() {
         int state = FreeTunnelVpnService.state(this);
-        return state >= 1 && state <= 5;
+        return state >= 1 && state <= 6;
     }
 
     public static void refresh(Context context) {

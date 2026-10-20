@@ -13,12 +13,10 @@
     <string name="text_disconnect_vpn">"Disconnect VPN"</string>
     <string name="text_connect_vpn">"Connect VPN"</string>
     <string name="text_add_a_configuration_first">"Add a configuration first"</string>
-    <string name="text_invalid_vpn_configuration_check_the_server_settings">"Invalid VPN configuration. Check the server settings."</string>
     <string name="text_connecting">"Connecting…"</string>
     <string name="text_connected">"Connected"</string>
     <string name="text_recovering_connection">"Recovering connection…"</string>
     <string name="text_disconnected">"Disconnected"</string>
-    <string name="text_settings_were_not_applied_check_the_configuration">"Settings were not applied. Check the configuration."</string>
     <string name="text_applying_routing_settings">"Applying routing settings"</string>
     <string name="text_check_server_tcp_latency">"Check server TCP latency"</string>
     <string name="text_selected">"●  selected"</string>
@@ -35,7 +33,6 @@
     <string name="text_clipboard_is_empty">"Clipboard is empty"</string>
     <string name="text_from_clipboard">"From clipboard"</string>
     <string name="text_storage_is_unavailable_data_has_not_been_changed">"Storage is unavailable. Data has not been changed."</string>
-    <string name="text_invalid_toml_or_server_settings_configuration_was_no">"Invalid TOML or server settings. Configuration was not saved."</string>
     <string name="text_add_configuration_36">"Add configuration “"</string>
     <string name="text_nserver">"”?\nServer: "</string>
     <string name="text_nserver_certificate_verification_is_disabled">"\nServer certificate verification is disabled."</string>
@@ -105,7 +102,6 @@
     <string name="text_vpn_disconnected">"VPN disconnected"</string>
     <string name="text_preparing_vpn">"Preparing VPN"</string>
     <string name="text_vpn_settings_were_not_applied">"VPN settings were not applied"</string>
-    <string name="text_the_previous_connection_is_still_active">"The previous connection is still active"</string>
     <string name="text_could_not_start_vpn">"Could not start VPN"</string>
     <string name="text_connection_to_the_server_was_lost">"Connection to the server was lost"</string>
     <string name="text_vpn_permission_was_revoked">"VPN permission was revoked"</string>
@@ -124,4 +120,11 @@
     <string name="invalid_routing_rule">"Invalid domain, IP or subnet. Check the entered rules."</string>
     <string name="vpn_failure_details">"%1$s. Traffic is unprotected unless Android blocks connections without VPN."</string>
     <string name="app_name">"FreeTunnel"</string>
+    <string name="vpn_traffic_blocked">Connection failed — VPN traffic is blocked</string>
+    <string name="vpn_reconnect">Reconnect</string>
+    <string name="validating_config">Checking configuration…</string>
+    <string name="config_validation_error">Configuration rejected: %1$s</string>
+    <string name="legacy_rules_removed">Unsupported rules from an older preview were removed. Review your routing rules.</string>
+    <string name="imported_routing_rules">Rules in the selected configuration: %1$s. These also affect routing and the full VPN fallback.</string>
+    <string name="lockdown_app_warning">Android’s “Block connections without VPN” also blocks internet access for apps excluded by per-app routing.</string>
 </resources>

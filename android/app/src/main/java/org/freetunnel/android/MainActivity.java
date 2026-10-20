@@ -77,6 +77,8 @@ public final class MainActivity extends Activity {
     private String pendingConfig;
     private boolean receiverRegistered;
     private boolean storageFailed;
+    private long validationRequest;
+    private final java.util.concurrent.ExecutorService validationWorker = java.util.concurrent.Executors.newSingleThreadExecutor();
     private final BroadcastReceiver vpnReceiver = new BroadcastReceiver() {
         @Override public void onReceive(Context context, Intent intent) {
             vpnState = FreeTunnelVpnService.state(context);
@@ -268,30 +270,29 @@ public final class MainActivity extends Activity {
     private void connect() {
         vpnState = FreeTunnelVpnService.state(this);
         if (isVpnActive()) {
+            validationRequest++;
             FreeTunnelVpnService.stop(this);
             return;
         }
         if (configs.isEmpty()) { page = 1; render(); toast(getString(R.string.text_add_a_configuration_first)); return; }
         Config config = configs.get(Math.max(0, Math.min(activeIndex, configs.size() - 1)));
-        try {
-            RoutingConfig.Plan plan = RoutingConfig.prepare(this, config.toml);
-            NativeConfigValidator.INSTANCE.validate(plan.getToml());
-            if (plan.getWarning() != null) toast(getString(plan.getWarning()));
+        validateAsync(config.toml, () -> {
             pendingConfig = config.toml;
-        } catch (Exception e) { toast(getString(R.string.text_invalid_vpn_configuration_check_the_server_settings)); return; }
-        Intent prepare = VpnService.prepare(this);
-        if (prepare != null) startActivityForResult(prepare, PREPARE_VPN);
-        else startVpnWithPendingConfig();
+            Intent prepare = VpnService.prepare(this);
+            if (prepare != null) startActivityForResult(prepare, PREPARE_VPN);
+            else startVpnWithPendingConfig();
+        }, () -> {});
     }
 
     private boolean isVpnActive() {
-        return vpnState == 1 || vpnState == 2 || vpnState == 3 || vpnState == 4 || vpnState == 5;
+        return vpnState == 1 || vpnState == 2 || vpnState == 3 || vpnState == 4 || vpnState == 5 || vpnState == 6;
     }
 
     private String connectionCaption() {
         switch (vpnState) {
             case 1: return getString(R.string.text_connecting);
             case 2: return getString(R.string.text_connected);
+            case 6: return getString(R.string.vpn_traffic_blocked);
             case 3: case 4: case 5: return getString(R.string.text_recovering_connection);
             default: return getString(R.string.text_disconnected);
         }
@@ -314,19 +315,35 @@ public final class MainActivity extends Activity {
             return;
         }
         Config config = configs.get(Math.max(0, Math.min(activeIndex, configs.size() - 1)));
-        try {
-            RoutingConfig.Plan plan = RoutingConfig.prepare(this, config.toml);
-            NativeConfigValidator.INSTANCE.validate(plan.getToml());
-            if (plan.getWarning() != null) toast(getString(plan.getWarning()));
-            FreeTunnelVpnService.restart(this, config.toml);
-        } catch (Exception e) { toast(getString(R.string.text_settings_were_not_applied_check_the_configuration)); return; }
-        vpnState = 1;
-        toast(getString(R.string.text_applying_routing_settings));
-        QuickTileService.refresh(this);
+        validateAsync(config.toml, () -> {
+            if (FreeTunnelVpnService.state(this) == 0) return;
+            FreeTunnelVpnService.start(this, config.toml);
+            toast(getString(R.string.text_applying_routing_settings));
+        }, () -> {});
     }
 
-    private String effectiveConfig(String source) {
-        return RoutingConfig.prepare(this, source).getToml();
+    private void validateAsync(String source, Runnable accepted, Runnable rejected) {
+        if (storageFailed) { toast(getString(R.string.text_storage_is_unavailable_data_has_not_been_changed)); rejected.run(); return; }
+        final long request = ++validationRequest;
+        toast(getString(R.string.validating_config));
+        validationWorker.execute(() -> {
+            try {
+                RoutingConfig.Plan plan = RoutingConfig.prepare(this, source);
+                NativeConfigValidator.INSTANCE.validate(getApplicationContext(), plan.getToml());
+                runOnUiThread(() -> {
+                    if (isDestroyed()) return;
+                    if (request != validationRequest) { rejected.run(); return; }
+                    if (plan.getWarning() != null) toast(getString(plan.getWarning()));
+                    accepted.run();
+                });
+            } catch (Exception error) {
+                runOnUiThread(() -> {
+                    if (isDestroyed()) return;
+                    rejected.run();
+                    if (request == validationRequest) toast(getString(R.string.config_validation_error, error.getMessage()));
+                });
+            }
+        });
     }
 
     private void configs(LinearLayout body) {
@@ -433,19 +450,13 @@ public final class MainActivity extends Activity {
 
         confirmImport(imported.name, imported.toml);
     }
-    private boolean validateForSave(String source) {
-        if (storageFailed) { toast(getString(R.string.text_storage_is_unavailable_data_has_not_been_changed)); return false; }
-        try {
-            RoutingConfig.validate(source);
-            NativeConfigValidator.INSTANCE.validate(effectiveConfig(source));
-            return true;
-        } catch (Exception e) { toast(getString(R.string.text_invalid_toml_or_server_settings_configuration_was_no)); return false; }
-    }
     private void importToml(String name, String toml) {
         confirmImport(name, stripBom(toml));
     }
     private void confirmImport(String name, String source) {
-        if (!validateForSave(source)) return;
+        validateAsync(source, () -> showImportConfirmation(name, source), () -> {});
+    }
+    private void showImportConfirmation(String name, String source) {
         org.tomlj.TomlTable parsed = RoutingConfig.validate(source);
         String message = getString(R.string.text_add_configuration_36) + name + getString(R.string.text_nserver) + parsed.getString("endpoint.hostname");
         if (Boolean.TRUE.equals(parsed.getBoolean("endpoint.skip_verification")))
@@ -455,8 +466,9 @@ public final class MainActivity extends Activity {
                 message += getString(R.string.text_nthis_configuration_or_name_already_exists_a_separat); break;
             }
         }
-        if (name.codePoints().anyMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.LATIN)
-                && name.codePoints().anyMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.CYRILLIC))
+        if (name.codePoints().mapToObj(Character.UnicodeScript::of)
+                .filter(script -> script != Character.UnicodeScript.COMMON && script != Character.UnicodeScript.INHERITED
+                        && script != Character.UnicodeScript.UNKNOWN).distinct().count() > 1)
             message += getString(R.string.text_nthe_name_mixes_similar_characters_from_different_al);
         new AlertDialog.Builder(this).setTitle(getString(R.string.text_import_trusttunnel)).setMessage(message)
                 .setNegativeButton(getString(R.string.text_cancel), null).setPositiveButton(getString(R.string.text_add), (dialog, which) -> {
@@ -470,6 +482,7 @@ public final class MainActivity extends Activity {
     }
     private void editConfig(int index) {
         if (storageFailed) { toast(getString(R.string.text_storage_is_unavailable_data_has_not_been_changed)); return; }
+        final Config editing = index < 0 ? null : configs.get(index);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         LinearLayout form = column(); form.setPadding(dp(20), dp(5), dp(20), 0);
         EditText name = new EditText(this); name.setSingleLine(true); name.setTextColor(textColor());
@@ -487,16 +500,27 @@ public final class MainActivity extends Activity {
         AlertDialog editor = new AlertDialog.Builder(this).setTitle(index < 0 ? getString(R.string.text_new_configuration) : getString(R.string.text_edit_configuration))
                 .setView(scroll).setNegativeButton(getString(R.string.text_cancel), null)
                 .setPositiveButton(getString(R.string.text_save), null).create();
-        editor.setOnDismissListener(d -> getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE));
+        editor.setOnDismissListener(d -> {
+            validationRequest++;
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        });
         editor.show();
         editor.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
                     String n = name.getText().toString().trim();
                     String t = stripBom(raw.getText().toString().trim());
                     if (n.isEmpty()) { toast(getString(R.string.text_enter_a_configuration_name)); return; }
-                    if (!validateForSave(t)) return;
-                    if (index < 0) configs.add(new Config(n, t)); else configs.set(index, new Config(n, t));
-                    saveConfigs(); applyCurrentRules(); render(); editor.dismiss();
+                    editor.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(false);
+                    validateAsync(t, () -> {
+                        if (!editor.isShowing()) return;
+                        if (editing == null) configs.add(new Config(n, t));
+                        else {
+                            int current = configs.indexOf(editing);
+                            if (current < 0) return;
+                            configs.set(current, new Config(n, t));
+                        }
+                        saveConfigs(); editor.dismiss(); applyCurrentRules(); render();
+                    }, () -> editor.getButton(AlertDialog.BUTTON_POSITIVE).setEnabled(true));
                 });
     }
     private void confirmRemove(int index) {
@@ -558,6 +582,17 @@ public final class MainActivity extends Activity {
         body.addView(mode, lp(-1, 42));
         TextView explanation = label(getString(R.string.text_for_through_vpn_choose_applications_or_addresses_sel), 12, dim(), false);
         body.addView(explanation, lp(-1, 66));
+        for (Config config : configs) {
+            if (configs.indexOf(config) != activeIndex) continue;
+            try {
+                org.tomlj.TomlArray imported = RoutingConfig.validate(config.toml).getArray("exclusions");
+                if (imported != null && imported.size() > 0) body.addView(label(getString(R.string.imported_routing_rules, imported.toList().toString()),
+                        12, dim(), false), lp(-1, -2));
+            } catch (Exception ignored) { }
+        }
+        if (prefs.getBoolean("rules_migrated", false)) {
+            body.addView(label(getString(R.string.legacy_rules_removed), 12, dim(), false), lp(-1, -2));
+        }
         gap(body, 14);
         LinearLayout domainHeader = row();
         domainHeader.addView(label(through ? getString(R.string.text_rules_through_vpn) : getString(R.string.text_rules_bypass_vpn), 11, faint(), true),
@@ -673,6 +708,7 @@ public final class MainActivity extends Activity {
         body.addView(systemVpn, lp(-1, 48));
         body.addView(label(getString(R.string.text_enable_always_on_vpn_and_block_connections_without_v),
                 12, dim(), false), lp(-1, 46));
+        body.addView(label(getString(R.string.lockdown_app_warning), 12, dim(), false), lp(-1, -2));
         section(body, getString(R.string.text_log));
         addSwitch(body, getString(R.string.text_enable_logging), "", "logging", true);
         section(body, getString(R.string.text_about));
@@ -737,6 +773,11 @@ public final class MainActivity extends Activity {
         panel.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
         body.addView(panel, new LinearLayout.LayoutParams(-1, 0, 1));
     }
+    @Override protected void onDestroy() {
+        validationRequest++;
+        validationWorker.shutdown();
+        super.onDestroy();
+    }
     private void loadConfigs() {
         try {
             JSONArray array = new JSONArray(ConfigStore.read(prefs));
@@ -756,6 +797,7 @@ public final class MainActivity extends Activity {
                 .setPositiveButton(getString(R.string.text_ok), null).show();
     }
     private void saveConfigs() {
+        validationRequest++;
         if (storageFailed) { toast(getString(R.string.text_storage_is_unavailable_data_has_not_been_changed)); return; }
         JSONArray array = new JSONArray();
         for (Config config : configs) {
