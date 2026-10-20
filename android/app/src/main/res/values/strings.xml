@@ -127,4 +127,17 @@
     <string name="legacy_rules_removed">Unsupported rules from an older preview were removed. Review your routing rules.</string>
     <string name="imported_routing_rules">Rules in the selected configuration: %1$s. These also affect routing and the full VPN fallback.</string>
     <string name="lockdown_app_warning">Android’s “Block connections without VPN” also blocks internet access for apps excluded by per-app routing.</string>
+    <string name="update_title">Updates</string>
+    <string name="update_on_launch">Check for updates on launch</string>
+    <string name="update_check">Check for updates</string>
+    <string name="update_download">Download update</string>
+    <string name="update_install">Install update</string>
+    <string name="update_hint">Official Android releases only. Installation requires Android confirmation.</string>
+    <string name="update_checking">Checking official releases…</string>
+    <string name="update_current">No newer official Android release is available.</string>
+    <string name="update_available">Update available:</string>
+    <string name="update_downloading">Downloading and verifying:</string>
+    <string name="update_ready">Verified update ready. Allow installs from FreeTunnel if Android asks, then tap Install again.</string>
+    <string name="update_installing">Waiting for Android installation confirmation…</string>
+    <string name="update_error">Update failed or was cancelled. Installation was refused. Check your connection and try again.</string>
 </resources>

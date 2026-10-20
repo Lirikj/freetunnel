@@ -10,6 +10,7 @@ dependencies {
     implementation 'io.reactivex.rxjava3:rxandroid:3.0.0'
     implementation 'com.akuleshov7:ktoml-core:0.7.0'
     implementation 'org.tomlj:tomlj:1.1.1'
+    implementation 'org.bouncycastle:bcprov-jdk15to18:1.86'
     androidTestImplementation 'androidx.test.ext:junit:1.2.1'
     androidTestImplementation 'androidx.test:runner:1.6.2'
     implementation 'androidx.core:core-ktx:1.16.0'
@@ -27,6 +28,11 @@ android {
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         versionCode 10000
         versionName '1.0.0'
+        // One canonical public key shared with the desktop updater.
+        def keyHeader = rootProject.file('../include/core/ReleaseSigning.h').text
+        def keyMatch = keyHeader =~ /MCowBQYDK2VwAyEA[A-Za-z0-9+\/=]+/
+        if (!keyMatch.find()) throw new GradleException('Missing release verification key')
+        buildConfigField 'String', 'RELEASE_SIGNING_KEY', '\"' + keyMatch.group() + '\"'
     }
     buildFeatures { buildConfig true }
     signingConfigs {

@@ -127,4 +127,17 @@
     <string name="legacy_rules_removed">Удалены неподдерживаемые правила старой превью-версии. Проверьте маршрутизацию.</string>
     <string name="imported_routing_rules">Правила выбранного конфига: %1$s. Они также влияют на маршрутизацию и включение полного VPN.</string>
     <string name="lockdown_app_warning">Блокировка Android «Без VPN нет соединений» также отключит интернет приложениям, исключённым из VPN.</string>
+    <string name="update_title">Обновления</string>
+    <string name="update_on_launch">Проверять обновления при запуске</string>
+    <string name="update_check">Проверить обновления</string>
+    <string name="update_download">Скачать обновление</string>
+    <string name="update_install">Установить обновление</string>
+    <string name="update_hint">Только официальные Android-релизы. Установка требует подтверждения Android.</string>
+    <string name="update_checking">Проверка официальных релизов…</string>
+    <string name="update_current">Нового официального Android-релиза нет.</string>
+    <string name="update_available">Доступно обновление:</string>
+    <string name="update_downloading">Загрузка и проверка:</string>
+    <string name="update_ready">Обновление проверено. Если Android запросит, разрешите установку из FreeTunnel, затем нажмите «Установить» ещё раз.</string>
+    <string name="update_installing">Ожидание подтверждения установки Android…</string>
+    <string name="update_error">Обновление не выполнено или отменено. Установка отклонена. Проверьте сеть и повторите попытку.</string>
 </resources>

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add authenticated official Android update discovery, Ed25519/version/hash verification, private downloads and PackageInstaller consent; launch checks are optional.
+
 - Retain a blocking TUN after fatal native disconnect and post-establishment start failures when kill switch is enabled; add reconnect/disconnect notification actions.
 - Isolate native validation in a disposable private process and move UI validation off the main thread.
 - Fix permission-revocation cleanup, preserve state after rejected replacement, and reuse one network collector per service lifetime.

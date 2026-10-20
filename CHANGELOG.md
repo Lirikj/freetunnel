@@ -7,6 +7,12 @@ compare link at the bottom of its release notes.
 
 ## Unreleased
 
+### Added
+
+- **Android preview: check for official Android updates in Settings.** Downloads
+  require a signed manifest naming the offered version and a matching APK hash.
+  Android asks before installation. Optional launch checks can be disabled.
+
 ### Fixed
 
 - **Android preview: kill switch keeps traffic blocked after a fatal connection

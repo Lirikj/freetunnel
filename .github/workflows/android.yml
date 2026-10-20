@@ -70,6 +70,7 @@ jobs:
             ./android/gradlew -p android --no-daemon :app:installDebug :app:installDebugAndroidTest
             adb shell appops set org.freetunnel.android ACTIVATE_VPN allow
             adb shell pm grant org.freetunnel.android android.permission.POST_NOTIFICATIONS
+            adb shell appops set org.freetunnel.android REQUEST_INSTALL_PACKAGES allow
             ./android/gradlew -p android --no-daemon :app:connectedDebugAndroidTest
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()

@@ -77,6 +77,8 @@ public final class MainActivity extends Activity {
     private String pendingConfig;
     private boolean receiverRegistered;
     private boolean storageFailed;
+    private TextView updateStatus;
+    private TextView updateAction;
     private long validationRequest;
     private final java.util.concurrent.ExecutorService validationWorker = java.util.concurrent.Executors.newSingleThreadExecutor();
     private final BroadcastReceiver vpnReceiver = new BroadcastReceiver() {
@@ -102,6 +104,7 @@ public final class MainActivity extends Activity {
         vpnState = FreeTunnelVpnService.state(this);
         loadConfigs();
         render();
+        if (state == null && prefs.getBoolean("check_updates_on_launch", false)) AndroidUpdater.INSTANCE.check();
         if (state == null) handleIncomingIntent(getIntent());
         if (state == null && prefs.getBoolean("auto_connect", false) && vpnState == 0
                 && !configs.isEmpty() && !Intent.ACTION_VIEW.equals(getIntent().getAction())) {
@@ -119,11 +122,13 @@ public final class MainActivity extends Activity {
             ContextCompat.registerReceiver(this, vpnReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED);
             receiverRegistered = true;
         }
+        AndroidUpdater.INSTANCE.observe(() -> { if (page == 3) refreshUpdateControls(); });
         vpnState = FreeTunnelVpnService.state(this);
-        if (page == 0) render();
+        if (page == 0 || page == 3) render();
     }
 
     @Override protected void onPause() {
+        AndroidUpdater.INSTANCE.observe(null);
         if (receiverRegistered) {
             unregisterReceiver(vpnReceiver);
             receiverRegistered = false;
@@ -711,9 +716,46 @@ public final class MainActivity extends Activity {
         body.addView(label(getString(R.string.lockdown_app_warning), 12, dim(), false), lp(-1, -2));
         section(body, getString(R.string.text_log));
         addSwitch(body, getString(R.string.text_enable_logging), "", "logging", true);
+        section(body, getString(R.string.update_title));
+        addSwitch(body, getString(R.string.update_on_launch), "", "check_updates_on_launch", false);
+        updateStatus = label("", 12, dim(), false);
+        body.addView(updateStatus, lp(-1, -2));
+        updateAction = label("", 14, accent(), false);
+        updateAction.setOnClickListener(v -> {
+            AndroidUpdater.State update = AndroidUpdater.INSTANCE.getState();
+            if (update == AndroidUpdater.State.AVAILABLE) AndroidUpdater.INSTANCE.download(this);
+            else if (update == AndroidUpdater.State.READY) AndroidUpdater.INSTANCE.install(this);
+            else AndroidUpdater.INSTANCE.check();
+        });
+        body.addView(updateAction, lp(-1, 48));
+        refreshUpdateControls();
         section(body, getString(R.string.text_about));
         body.addView(label(getString(R.string.text_freetunnel_for_android), 14, textColor(), false), lp(-1, 42));
         body.addView(label(getString(R.string.text_version) + BuildConfig.VERSION_NAME, 12, dim(), false), lp(-1, 28));
+    }
+    private void refreshUpdateControls() {
+        if (updateStatus == null || updateAction == null) return;
+        AndroidUpdater.State update = AndroidUpdater.INSTANCE.getState();
+        int status;
+        switch (update) {
+            case CHECKING: status = R.string.update_checking; break;
+            case CURRENT: status = R.string.update_current; break;
+            case AVAILABLE: status = R.string.update_available; break;
+            case DOWNLOADING: status = R.string.update_downloading; break;
+            case READY: status = R.string.update_ready; break;
+            case INSTALLING: status = R.string.update_installing; break;
+            case ERROR: status = R.string.update_error; break;
+            default: status = R.string.update_hint;
+        }
+        String updateText = getString(status);
+        UpdatePolicy.Release release = AndroidUpdater.INSTANCE.getRelease();
+        if (release != null) updateText += " " + release.getVersion();
+        if (update == AndroidUpdater.State.DOWNLOADING) updateText += " · " + AndroidUpdater.INSTANCE.getProgress() + "%";
+        updateStatus.setText(updateText);
+        updateAction.setText(getString(update == AndroidUpdater.State.AVAILABLE ? R.string.update_download :
+                update == AndroidUpdater.State.READY ? R.string.update_install : R.string.update_check));
+        updateAction.setEnabled(update != AndroidUpdater.State.CHECKING && update != AndroidUpdater.State.DOWNLOADING
+                && update != AndroidUpdater.State.INSTALLING);
     }
     private void separator(LinearLayout parent) {
         View line = new View(this); line.setBackgroundColor(dark ? Color.parseColor("#2e2e2e") : Color.parseColor("#d0d0d0"));

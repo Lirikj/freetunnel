@@ -117,3 +117,31 @@ Each validation process exits after unbinding, so checks cannot change the activ
 VPN's process-global native options or retain the adapter's temporary native copy
 of credentials. Legacy unsupported saved destination rules are removed during
 preparation and a notice appears on the routing screen. New rules remain strict.
+
+### Authenticated Android updates
+
+Settings offers **Check for updates**. Optional launch checks are disabled by
+default and can be turned off independently. The client reads the original
+repository's paginated Releases API, accepts only stable `android-X.Y.Z` tags newer
+than its installed version, and pins all three asset URLs to that repository and
+tag. Desktop tags, drafts, prereleases, foreign URLs and incomplete assets are
+ignored. The desktop updater's `/releases/latest` endpoint is never used.
+
+An Android release must provide `freetunnel-android-X.Y.Z.apk`,
+`SHA256SUMS-android.txt`, and the raw 64-byte Ed25519 signature
+`SHA256SUMS-android.txt.sig`. The manifest's first line must be `#version=X.Y.Z`,
+followed by an unambiguous SHA-256 entry for the APK. The public verification key
+is taken at build time from `include/core/ReleaseSigning.h`; no private signing
+key is shipped. Verification uses Bouncy Castle's lightweight Ed25519 implementation
+on all supported Android versions, including API 26.
+
+Downloads stay in the app's private cache. Signature, version binding, APK hash,
+package name, APK version and increasing version code are checked before enabling
+Install. The hash is rechecked before writing a PackageInstaller session. Android
+asks for the unknown-app-source permission where needed and requires installation
+confirmation, then enforces APK signer compatibility. Any failed verification
+refuses installation. Network failures and cancellation can be retried in Settings.
+
+Official release creation, project signing secrets and the rule that Android tags
+must **never** be marked GitHub's `latest` are owned by the original repository's
+release CI after merge. This client does not publish releases or configure secrets.
