@@ -61,6 +61,8 @@ public final class DeepLinkImportTest {
         assertTrue(fromPage.toml.indexOf("[endpoint]") < fromPage.toml.indexOf("dns_upstreams ="));
         assertTrue(fromPage.toml.contains("password = \"secret\""));
         assertFalse(fromPage.skipVerification);
+        assertTrue(fromPage.toml.contains("included_routes = [\"0.0.0.0/0\", \"2000::/3\"]"));
+        assertFalse(fromPage.toml.contains("\"::/0\""));
     }
 
     @Test public void rejectsMalformedAndUnsupportedLinks() throws Exception {

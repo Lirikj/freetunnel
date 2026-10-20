@@ -57,8 +57,8 @@ signing are managed by this project after the preview is merged.
 
 ## Install and first launch
 
-Desktop builds are **unsigned** (no code-signing certificates), so the OS may warn on
-first launch.
+Desktop builds are **unsigned** (no code-signing certificates), so the OS may
+warn on first launch.
 
 ### Windows
 

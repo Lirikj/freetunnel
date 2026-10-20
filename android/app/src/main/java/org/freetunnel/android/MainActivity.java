@@ -491,7 +491,8 @@ public final class MainActivity extends Activity {
         editor.show();
         editor.getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         editor.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
-                    String n = name.getText().toString().trim(), t = stripBom(raw.getText().toString().trim());
+                    String n = name.getText().toString().trim();
+                    String t = stripBom(raw.getText().toString().trim());
                     if (n.isEmpty()) { toast(getString(R.string.text_enter_a_configuration_name)); return; }
                     if (!validateForSave(t)) return;
                     if (index < 0) configs.add(new Config(n, t)); else configs.set(index, new Config(n, t));
@@ -735,10 +736,6 @@ public final class MainActivity extends Activity {
         placeholder.setTextIsSelectable(true);
         panel.addView(placeholder, new FrameLayout.LayoutParams(-1, -1));
         body.addView(panel, new LinearLayout.LayoutParams(-1, 0, 1));
-    }
-    private void pageTitle(LinearLayout body, String title, String subtitle) {
-        TextView h = label(title, 22, textColor(), true); body.addView(h, lp(-1, 34));
-        TextView s = label(subtitle, 13, dim(), false); body.addView(s, lp(-1, 31)); gap(body, 14);
     }
     private void loadConfigs() {
         try {

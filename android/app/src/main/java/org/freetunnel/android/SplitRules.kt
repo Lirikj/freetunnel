@@ -1,5 +1,6 @@
 package org.freetunnel.android
 
+import java.math.BigInteger
 import java.net.IDN
 import java.net.InetAddress
 import java.util.Locale
@@ -21,9 +22,33 @@ object SplitRules {
         val prefix = if (parts.size == 2) parts[1].toIntOrNull()?.takeIf { it in 0..bits } ?: return null else bits
         return "${host.lowercase(Locale.ROOT)}/$prefix"
     }
+    /** Numeric CIDRs only; preserve IPv6 mapped addresses as a 128-bit family. */
+    fun coversAddressFamily(routes: List<String>): Boolean = listOf(32, 128).any { bits ->
+        val intervals = routes.mapNotNull { raw ->
+            val cidr = subnet(raw) ?: return@mapNotNull null
+            val host = cidr.substringBefore('/')
+            if ((if (':' in host) 128 else 32) != bits) return@mapNotNull null
+            var bytes = InetAddress.getByName(host).address
+            if (bits == 128 && bytes.size == 4) {
+                bytes = ByteArray(10) + byteArrayOf(0xff.toByte(), 0xff.toByte()) + bytes
+            }
+            val remaining = bits - cidr.substringAfter('/').toInt()
+            val first = BigInteger(1, bytes).shiftRight(remaining).shiftLeft(remaining)
+            first to first.add(BigInteger.ONE.shiftLeft(remaining)).subtract(BigInteger.ONE)
+        }.sortedBy { it.first }
+        var next = BigInteger.ZERO
+        for ((first, last) in intervals) {
+            if (first > next) break
+            if (last >= next) next = last.add(BigInteger.ONE)
+        }
+        next >= BigInteger.ONE.shiftLeft(bits)
+    }
     fun core(raw: String): String? {
         val v = raw.trim().lowercase(Locale.ROOT)
-        subnet(v)?.let { return if ('/' in v) it else v }
+        subnet(v)?.let {
+            if (it.substringAfterLast('/').toInt() == 0) return null
+            return if ('/' in v) it else v
+        }
         if ('/' in v || ':' in v) return null
         val wild = v.startsWith("*.") || v.startsWith('.')
         val host = v.removePrefix("*.").removePrefix(".").removeSuffix(".")

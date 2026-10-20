@@ -121,4 +121,61 @@ class RoutingConfigTest {
             assertThrows(IllegalArgumentException::class.java) { SplitRules.normalize(it) }
         }
     }
+
+    @Test fun defaultDestinationRulesAreRejectedInBothModes() {
+        val variants = listOf("0.0.0.0/0", "192.0.2.1/00", "::/0", "2001:db8::1/+0", "0:0:0:0:0:0:0:0/-0")
+        for (rule in variants) {
+            assertNull(SplitRules.core(rule))
+            assertThrows(IllegalArgumentException::class.java) { SplitRules.normalize(rule) }
+            assertThrows(IllegalArgumentException::class.java) { plan(through = false, domains = listOf(rule)) }
+            assertThrows(IllegalArgumentException::class.java) { plan(text = source.replace("intranet.example", rule)) }
+        }
+        assertNotNull(plan(enabled = false)) // included_routes defaults remain valid.
+    }
+    @Test fun excludedRoutesCannotRemoveAnEntireAddressFamily() {
+        val exclusions = listOf(
+            "\"0.0.0.0/0\"", "\"::/0\"", "\"192.0.2.1/+0\"", "\"2001:db8::1/00\"",
+            "\"0.0.0.1/1\", \"128.0.0.9/1\"",
+            "\"8000::1/1\", \"::1/1\""
+        )
+        for (routes in exclusions) assertThrows(IllegalArgumentException::class.java) {
+            plan(text = source.replace("\"192.168.0.0/16\"", routes))
+        }
+        assertFalse(SplitRules.coversAddressFamily(listOf("0.0.0.0/2", "128.0.0.0/1", "0.0.0.0/2")))
+        assertFalse(SplitRules.coversAddressFamily(listOf("::ffff:0.0.0.0/96")))
+        assertFalse(SplitRules.coversAddressFamily(listOf("::/1", "::ffff:128.0.0.0/97")))
+        assertNotNull(plan(enabled = false))
+    }
+    @Test fun effectiveBypassRulesCannotCoverAnEntireFamilyButSelectiveUnionMay() {
+        val halves = listOf("0.0.0.0/1", "128.0.0.0/1")
+        assertThrows(IllegalArgumentException::class.java) { plan(through = false, domains = halves) }
+        assertEquals("selective", Toml.parse(plan(domains = halves).toml).getString("vpn_mode"))
+    }
+    @Test fun adapterRequiredTunFieldsAreRequiredBeforeSaving() {
+        assertThrows(IllegalStateException::class.java) { plan(text = source.replace("excluded_routes = [\"192.168.0.0/16\"]", "")) }
+        assertThrows(IllegalStateException::class.java) { plan(text = source.replace("mtu_size = 1350", "")) }
+    }
+    @Test fun credentialsAreWrittenAsAssignmentsUnderOrdinaryTableHeaders() {
+        val password = "secret\\"
+        val text = source.replace("password = 'secret \" slash\\end'", "password = '" + password + "'")
+        val result = plan(enabled = false, text = text).toml
+        assertTrue(result.contains("[endpoint]\n")); assertTrue(result.contains("[listener.tun]\n"))
+        assertFalse(result.contains("endpoint = {"))
+        assertEquals(password, Toml.parse(result).getString("endpoint.password"))
+        val tables = text + "\n[[extra]]\nvalue = 'one\\'\n[[extra]]\nvalue = 'two'\n"
+        val parsed = Toml.parse(plan(enabled = false, text = tables).toml)
+        assertEquals("one\\", parsed.getArray("extra")!!.getTable(0).getString("value"))
+        assertEquals("two", parsed.getArray("extra")!!.getTable(1).getString("value"))
+    }
+    @Test fun validationIncludesAutomaticPlatformExclusions() {
+        val rules = listOf("0.0.0.0/1", "128.0.0.0/2", "192.0.0.0/3")
+        assertFalse(SplitRules.coversAddressFamily(rules))
+        assertTrue(SplitRules.coversAddressFamily(rules + RoutingConfig.platformExcludedRoutes))
+        assertThrows(IllegalArgumentException::class.java) { plan(through = false, domains = rules) }
+        assertThrows(IllegalArgumentException::class.java) {
+            plan(text = source.replace("has_ipv6 = false", "has_ipv6 = true")
+                .replace("\"192.168.0.0/16\"", rules.joinToString(", ") { "\"$it\"" }))
+        }
+        assertNotNull(plan(enabled = false))
+    }
 }

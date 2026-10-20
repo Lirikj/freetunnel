@@ -5,6 +5,7 @@ import org.tomlj.TomlArray
 import org.tomlj.TomlTable
 
 object RoutingConfig {
+    internal val platformExcludedRoutes = listOf("0.0.0.0/8", "224.0.0.0/3")
     private fun quote(text: String): String = "\"" + buildString {
         text.forEach { c -> append(when (c) {
             '\\' -> "\\\\"; '"' -> "\\\""; '\n' -> "\\n"; '\r' -> "\\r"; '\t' -> "\\t"
@@ -21,6 +22,31 @@ object RoutingConfig {
         is java.time.LocalDateTime -> item.format(java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME)
         is java.time.OffsetDateTime -> item.format(java.time.format.DateTimeFormatter.ISO_OFFSET_DATE_TIME)
         else -> item.toString()
+    }
+    private fun key(text: String) = if (text.matches(Regex("[A-Za-z0-9_-]+"))) text else quote(text)
+    private fun document(root: Map<String, Any>): String = buildString {
+        fun tableArray(value: Any): List<TomlTable>? {
+            if (value !is TomlArray || value.isEmpty) return null
+            val values = (0 until value.size()).map { value.get(it) }
+            return if (values.all { it is TomlTable }) values.map { it as TomlTable } else null
+        }
+        fun writeTable(values: Map<String, Any>, path: List<String>, arrayElement: Boolean = false) {
+            if (path.isNotEmpty()) {
+                append(if (arrayElement) "\n[[" else "\n[")
+                append(path.joinToString(".", transform = ::key))
+                append(if (arrayElement) "]]\n" else "]\n")
+            }
+            values.filterValues { it !is TomlTable && tableArray(it) == null }.forEach { (name, value) ->
+                append(key(name)).append(" = ").append(render(value)).append('\n')
+            }
+            values.forEach { (name, value) ->
+                if (value is TomlTable) writeTable(value.keySet().associateWith { value.get(listOf(it))!! }, path + name)
+                tableArray(value)?.forEach { table ->
+                    writeTable(table.keySet().associateWith { table.get(listOf(it))!! }, path + name, true)
+                }
+            }
+        }
+        writeTable(root, emptyList())
     }
     private fun parse(source: String): TomlTable {
         require(source.length <= 1_048_576) { "Конфигурация слишком большая (максимум 1 МБ)" }
@@ -42,16 +68,22 @@ object RoutingConfig {
         }) { "Укажите addresses в формате адрес:порт" }
         require(endpoint.getString("upstream_protocol")?.let { it in listOf("http2", "http3") } != false) { "Укажите upstream_protocol: http2 или http3" }
         require(parsed.getString("vpn_mode")?.let { it in listOf("general", "selective") } != false) { "Неизвестный vpn_mode" }
-        parsed.getArray("exclusions")?.let { a -> (0 until a.size()).forEach { a.getString(it) } }
+        val rules = parsed.getArray("exclusions")?.let { a -> (0 until a.size()).map { a.getString(it) } }.orEmpty()
+        require(rules.none { SplitRules.subnet(it)?.substringAfterLast('/')?.toInt() == 0 }) { "Default routes cannot be destination rules" }
+        if (parsed.getString("vpn_mode") != "selective") {
+            require(!SplitRules.coversAddressFamily(rules + platformExcludedRoutes)) { "Destination exclusions cover an entire address family" }
+        }
         val tun = parsed.getTable("listener.tun") ?: error("Missing listener.tun")
         val included = tun.getArray("included_routes") ?: error("Missing included_routes")
         require(included.size() > 0) { "Empty included_routes" }
         val routes = (0 until included.size()).map { included.getString(it) }
-        val excluded = tun.getArray("excluded_routes")
-        val allRoutes = routes + (excluded?.let { a -> (0 until a.size()).map { a.getString(it) } }.orEmpty())
+        val excluded = tun.getArray("excluded_routes") ?: error("Missing excluded_routes")
+        val excludedRoutes = (0 until excluded.size()).map { excluded.getString(it) }
+        val allRoutes = routes + excludedRoutes
         require(allRoutes.all { SplitRules.subnet(it) != null && '/' in it }) { "Invalid TUN route" }
+        require(!SplitRules.coversAddressFamily(excludedRoutes + platformExcludedRoutes)) { "Excluded TUN routes cover an entire address family" }
         val ipv6 = (endpoint.getBoolean("has_ipv6") ?: false) && routes.any { ':' in it }
-        val mtu = tun.getLong("mtu_size") ?: 1500L
+        val mtu = tun.getLong("mtu_size") ?: error("Missing mtu_size")
         require(mtu in (if (ipv6) 1280L else 576L)..65535L) { "Invalid TUN MTU" }
         return parsed
     }
@@ -101,9 +133,10 @@ object RoutingConfig {
         root["vpn_mode"] = mode
         root["exclusions"] = rules
         root["killswitch_enabled"] = killSwitch
-        // Render each top-level value as a valid TOML value. Nested tables become
-        // inline tables, so multiline arrays, quoted keys and table comments work.
-        val result = root.entries.joinToString("\n", postfix = "\n") { (k, v) -> "${quote(k)} = ${render(v)}" }
+        // ktoml 0.7.0 cannot reliably decode escaped strings in inline tables.
+        // Keep configuration tables as ordinary headers and scalar assignments.
+        val result = document(root)
+        validate(result)
         return Plan(result, selectedApps, allowApps, warning)
     }
 }

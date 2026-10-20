@@ -86,6 +86,27 @@ class VpnDeviceTest {
         assertThrows(IllegalArgumentException::class.java) { NativeConfigValidator.validate(invalid) }
         assertNull(network())
     }
+    @Test fun adapterAndNativeFactoryPreserveEscapedPasswordsAndPem() {
+        val certificate = instrumentation.context.assets.open("test-endpoint.pem").bufferedReader().use { it.readText() }
+        val passwords = listOf("ending\\", "ending\"", "ending,", "ending}", "ending#", "mixed\\\",}#\\")
+        for (password in passwords) {
+            val input = source.replace("password = \"test\"", "password = '" + password + "'")
+                .replace("has_ipv6 = false", "has_ipv6 = false\ncertificate = \"\"\"\n" + certificate + "\"\"\"\n")
+            val plan = RoutingConfig.prepare(input, false, false, emptyList(), emptyList(), true)
+            val decoded = VpnServiceConfig.parseToml(plan.toml)
+            assertNotNull("Adapter must accept escaped credentials and PEM", decoded)
+            assertEquals(password, org.tomlj.Toml.parse(plan.toml).getString("endpoint.password"))
+            assertEquals(certificate, org.tomlj.Toml.parse(plan.toml).getString("endpoint.certificate"))
+            NativeConfigValidator.validate(plan.toml)
+        }
+        assertNull(network())
+    }
+    @Test fun adapterRequiredFieldsAreRejectedByTheSharedSaveValidator() {
+        for (missing in listOf("excluded_routes = []", "mtu_size = 1350")) {
+            assertThrows(IllegalStateException::class.java) { NativeConfigValidator.validate(source.replace(missing, "")) }
+        }
+        assertNull(network())
+    }
     @Test fun corruptedCiphertextIsNeverReplaced() {
         val isolated = context.getSharedPreferences("damaged-config-test", 0)
         val ciphertext = "AAAA"

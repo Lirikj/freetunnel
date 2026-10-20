@@ -181,7 +181,7 @@ class FreeTunnelVpnService : VpnService() {
         val dns = if (config.endpoint.dnsUpstreams.isEmpty()) listOf("46.243.231.30", "46.243.231.31") else listOf("198.18.53.53")
         dns.forEach(builder::addDnsServer)
         val included = tun.includedRoutes.filter { ipv6 || ':' !in it }
-        val excluded = tun.excludedRoutes.filter { ipv6 || ':' !in it } + listOf("0.0.0.0/8", "224.0.0.0/3")
+        val excluded = tun.excludedRoutes.filter { ipv6 || ':' !in it } + RoutingConfig.platformExcludedRoutes
         val routes = VpnClient.excludeCidr(included, excluded) ?: error("Неверные маршруты")
         require(routes.isNotEmpty()) { "Нет маршрутов VPN" }
         routes.forEach {

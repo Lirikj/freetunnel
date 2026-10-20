@@ -272,7 +272,7 @@ final class DeepLinkImport {
         if (pem.isEmpty()) out.append("certificate = \"\"\n");
         else out.append("certificate = \"\"\"\n").append(pem).append("\"\"\"\n");
         out.append("\n[listener.tun]\nbound_if = \"\"\nmtu_size = 1500\nchange_system_dns = true\n");
-        out.append("included_routes = [\"0.0.0.0/0\", \"::/0\"]\n");
+        out.append("included_routes = [\"0.0.0.0/0\", \"2000::/3\"]\n");
         out.append("excluded_routes = [\"0.0.0.0/8\", \"10.0.0.0/8\", \"169.254.0.0/16\", ");
         out.append("\"172.16.0.0/12\", \"192.168.0.0/16\", \"224.0.0.0/3\"]\n");
         return out.toString();

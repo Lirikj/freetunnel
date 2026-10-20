@@ -1,6 +1,7 @@
 package org.freetunnel.android
 
 import com.adguard.trusttunnel.VpnClient
+import com.adguard.trusttunnel.VpnServiceConfig
 
 /** Build/destroy a native client without starting it, opening sockets or a TUN.
  * The pinned adapter has no public validation API; use its existing JNI factory.
@@ -13,6 +14,7 @@ object NativeConfigValidator {
         // Never invoke the JNI factory on malformed TOML: older adapters return
         // a sentinel pointer on a parse failure instead of zero.
         RoutingConfig.validate(source)
+        require(VpnServiceConfig.parseToml(source) != null) { "Android adapter rejected the configuration" }
         val owner = VpnClient(source, null)
         val pointer = create.invoke(owner, source) as Long
         require(pointer != 0L && pointer != 1L) { "Ядро VPN отвергло конфигурацию. Проверьте настройки сервера." }

@@ -1,124 +1,104 @@
-# FreeTunnel для Android
+# FreeTunnel for Android (preview)
 
-Рабочий Android-клиент TrustTunnel с интерфейсом FreeTunnel. Использует настоящий
-`VpnService` и официальный Android-адаптер TrustTunnel **1.1.7**. Стабильный выпуск Android **1.0.0**: подписанный release APK
-и AAB доступны в [релизе](https://github.com/Lirikj/freetunnel/releases/tag/android-1.0.0).
-Покрытие проверок и ограничения — в [QA.md](QA.md).
+Android VPN client using the official, checksum-pinned **TrustTunnel 1.1.7**
+adapter. This preview is submitted to the original
+[dimmmmmmmer/freetunnel](https://github.com/dimmmmmmmer/freetunnel) project.
+Official Android release publishing and signing are controlled by that project;
+a fork's release name or certificate is not an official release or an update
+compatibility contract.
 
-## Возможности
+## Features
 
-- Импорт TOML, `tt://` и QR-ссылок TrustTunnel. Импорт показывает сервер,
-  предупреждает об отключённой проверке сертификата, дубликатах и смешанных
-  алфавитах имени. Только добавляет конфиг после подтверждения.
-- Настройки сервера проверяются TOML-парсером и фабрикой нативного клиента до
-  сохранения. Редактор по умолчанию скрывает TOML с паролем.
-- Конфиги шифруются AES-GCM ключом Android Keystore. Ошибка чтения не стирает
-  данные и запрещает запись поверх недоступного хранилища. Старый формат и ключ
-  сохраняются. Резервное копирование и перенос данных исключены.
-- Плитка подключает напрямую после выдачи разрешения VPN; для первого разрешения
-  используется отдельная неэкспортированная Activity. Экспортированный лаунчер
-  принимает ссылки только для подтверждённого импорта.
-- Состояние соединения хранится в памяти процесса. Force-stop, перезагрузка и
-  завершение сервиса не оставляют ложное «Подключено».
-- Kill switch ядра включён по умолчанию. Для защиты при остановке процесса,
-  ручном отключении или фатальном завершении включите в настройках Android
-  **«Постоянный VPN» → «Блокировать соединения без VPN»**. Уведомление об аварийном
-  отключении явно сообщает о потере защиты. Разрешите уведомления на Android 13+.
-  `START_STICKY` запрашивает перезапуск у Android, но не гарантирует его после
-  аварийного завершения процесса; Always-on также не является watchdog.
-  Проверенное поведение и ограничения описаны в [QA.md](QA.md).
-- Замена конфига/правил сначала создаёт новый TUN, затем освобождает старый.
-  Неподдерживаемый IPv6 блокируется; VPN не помечается лимитным на Android 10+.
-- Русский и английский интерфейс по языку устройства. TCP-пинг проверяет
-  доступность первого адреса сервера, а не скорость или задержку внутри VPN.
+- Confirmed import of TOML, `tt://` and TrustTunnel QR-page links. Import only
+  adds a profile; it never starts VPN or replaces another profile implicitly.
+- TOML, Android adapter and native configuration checks before saving.
+  The editor hides credentials by default and prevents screen capture.
+- AES-GCM encrypted profiles with Android Keystore. Read failures preserve
+  ciphertext and prevent overwriting inaccessible storage. Backup/device transfer
+  are excluded; the existing storage format and alias remain compatible.
+- A private VPN-consent activity and Quick Settings tile. Connection state is
+  process-local, so a stopped process cannot leave a persisted Connected state.
+- Kill switch enabled by default. For protection while the process or TUN is
+  absent, enable Android **Always-on VPN** and **Block connections without VPN**.
+  Android controls crash restart; neither START_STICKY nor Always-on is a watchdog.
+- Replacement TUN established before releasing the previous one. Unsupported
+  IPv6 is blocked; supported IPv6 imported from links uses global `2000::/3`.
+  VPN is unmetered on Android 10+; fatal errors show a separate notification.
+- Russian and English UI. TCP ping measures reachability of the first endpoint
+  address, not VPN throughput or tunnel latency.
 
-## Раздельная маршрутизация
+## Split tunnelling
 
-Один общий план применяется приложением, плиткой и запуском из системных настроек.
+The UI, tile and service use one routing plan.
 
-| Режим | Правила | Поведение |
+| Mode | Rules | Behavior |
 | --- | --- | --- |
-| В обход VPN | Приложения и/или адреса | Выбранное обходит VPN |
-| Через VPN | Только приложения | Нативный `general`, Android allowlist выбранных приложений |
-| Через VPN | Только адреса | Нативный `selective`, без Android allowlist |
-| Через VPN | Нет правил / приложения удалены | Полный VPN и предупреждение |
-| Через VPN | И приложения, и адреса | Полный VPN и предупреждение |
+| Bypass VPN | Apps and/or destinations | Selected traffic bypasses VPN |
+| Through VPN | Apps only | Native general mode plus Android app allowlist |
+| Through VPN | Destinations only | Native selective mode without app filtering |
+| Through VPN | Empty / all selected apps removed | Full VPN with warning |
+| Through VPN | Apps and destinations | Full VPN with warning |
 
-Последний случай — явное ограничение адаптера: Android allowlist и нативные
-правила адресов дают **пересечение**, а не объединение. Полный VPN защищает оба
-набора; для выборочного режима оставьте один тип правил. Предупреждение видно
-в интерфейсе и постоянном уведомлении.
+The adapter cannot express the union of Android app and destination rules: those
+filters intersect. Full VPN protects both selections explicitly; use one rule
+type for selective routing. Imported modes/exclusions are preserved when split
+settings are disabled, and changing modes does not reverse imported exclusions.
+Destination `/0` rules and whole-family bypass exclusions are rejected; default
+routes remain valid in `included_routes`. Domains support IDN and whitespace,
+commas or semicolons as separators.
 
-Когда переключатель раздельной маршрутизации выключен, собственные `vpn_mode`,
-`exclusions` и маршруты импортированного конфига сохраняются. При смене режима
-старые exclusions противоположного режима не получают обратный смысл.
-Пустой `selective` всегда переходит в полный VPN. Исключённые пользователем
-маршруты остаются исключёнными. Домены поддерживают IDN; разделители — пробелы,
-переносы, запятые и точки с запятой.
+## Build and signing
 
-## Сборка
+Requires JDK 17, Android SDK 35, Build Tools 35.0.0, Bash, curl and Python 3.
+From the repository root:
 
-Нужны **JDK 17**, **Android SDK 35**, Build Tools 35.0.0, Bash, curl и Python 3.
-Gradle 8.11.1 запускается через wrapper с проверкой SHA-256 дистрибутива.
-
-Из корня репозитория:
-
-```bash
+```sh
 scripts/prepare-trusttunnel-android.sh
-cd android
-./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
+./android/gradlew -p android --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleRelease
 ```
 
-Подготовка скачивает официальный публичный AAR без GitHub PAT и проверяет SHA-256:
+The public AAR download needs no GitHub PAT. Its SHA-256 is checked during
+preparation and every build:
 `5398df61f74610d1d63819059bb596560feb51882e9ca78609df32fc4c7840f7`.
-Каждая сборка повторно проверяет контрольную сумму. Соседние копии исходников
-не меняют выбранное ядро. AAR не хранится в Git; после успешной подготовки
-повторный запуск использует проверенный локальный файл. При проблемах сети
-повторите подготовку; не подменяйте AAR другим ядром.
+Gradle 8.11.1 wrapper and distribution checksums are pinned too.
 
-Debug APK: `app/build/outputs/apk/debug/app-debug.apk` (тестовая подпись).
-Release без настроенного ключа: `app/build/outputs/apk/release/app-release-unsigned.apk`.
-Для подписи release задайте `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`,
-`ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` в окружении сборки. Используйте
-существующий ключ приложения для обновлений; ключи и пароли не коммитьте.
+Debug APK: `android/app/build/outputs/apk/debug/app-debug.apk` (debug signing).
+Without signing variables, release builds produce an unsigned APK. For a signed
+release, supply `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_PASSWORD`,
+`ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD` through the environment or CI
+secrets, then run:
 
-Для полноценной подписанной сборки из корня репозитория:
-
-```bash
+```sh
 scripts/build-android-release.sh
 ```
 
-Скрипт требует все четыре переменные подписи, выполняет release-тесты и lint,
-собирает APK и AAB и проверяет подпись обоих файлов. Ключ хранится локально
-вне репозитория и не передаётся в GitHub CI.
+The script checks the required variables, runs release tests/lint, builds APK/AAB
+and verifies their signatures. Never commit keystores or credentials. The official
+project supplies its own signing identity; compatibility with fork-signed builds
+is not required. Android itself enforces signing identity on installed updates.
 
-В 1.0.0 используется новый постоянный сертификат. Установки preview с debug-
-подписью требуют удаления старого приложения перед установкой; это удаляет
-локальные профили. Сохраните исходные ссылки/TOML заранее. Последующие release
-обновления должны использовать тот же постоянный ключ. Отпечаток публичного
-сертификата приложен к релизу; секретный ключ и пароль не публикуются.
+## Device checks
 
-## Проверки устройства
+The automated device suite is currently validated on **API 35** (arm64 locally,
+x86_64 in CI); older supported Android versions have not been validated by this
+suite. Run on a dedicated emulator:
 
-На отдельном эмуляторе API 35 с разрешением VPN и уведомлений:
-
-```bash
-./gradlew :app:installDebug :app:installDebugAndroidTest
+```sh
+./android/gradlew -p android :app:installDebug :app:installDebugAndroidTest
 adb shell appops set org.freetunnel.android ACTIVATE_VPN allow
 adb shell pm grant org.freetunnel.android android.permission.POST_NOTIFICATIONS
-./gradlew :app:connectedDebugAndroidTest
+./android/gradlew -p android :app:connectedDebugAndroidTest
 ```
 
-CI: [Android workflow](../.github/workflows/android.yml) выполняет JVM-тесты,
-lint, сборки и тесты на эмуляторе. Ошибки проверки не маскируются baseline.
-Тесты устройства проверяют реальный JNI-адаптер, TUN, замены, отклонение
-конфигов, шифрование и границу экспортированных Activity. Для жизненного цикла
-используется локальный TCP-сервер, удерживающий TLS-рукопожатие: это не проверка
-передачи трафика через рабочий TrustTunnel-сервер. Отдельная проверка
-с настоящим endpoint, TLS и HTTP описана в [QA.md](QA.md).
+[Android CI](../.github/workflows/android.yml) runs JVM tests, lint, builds and
+emulator tests without lint baselines. Device tests exercise the real JNI adapter,
+TUN replacement/failure cleanup, encrypted storage and exported-entry boundaries.
+Their lifecycle TCP sink is not a working tunnel endpoint. Historical manual
+acceptance used an API-35 emulator, `adb reverse` to a local macOS TrustTunnel
+endpoint and TCP/HTTP2 only: [QA.md](QA.md). It does not establish physical-device,
+remote-server, DNS or HTTP/3 coverage.
 
-## Лицензия
+## License
 
-FreeTunnel и TrustTunnel — Apache-2.0. Общая лицензия FreeTunnel — в
-[LICENSE](../LICENSE), исходный адаптер — в
+FreeTunnel and TrustTunnel are Apache-2.0. See [LICENSE](../LICENSE) and
 [TrustTunnelClient v1.1.7](https://github.com/TrustTunnel/TrustTunnelClient/tree/v1.1.7).
