@@ -404,7 +404,9 @@ public final class MainActivity extends Activity {
             int port = Integer.parseInt(target.substring(separator + 1));
             if (port < 1 || port > 65535) return getString(R.string.text_no_port);
             long start = SystemClock.elapsedRealtime();
-            try (Socket socket = new Socket()) { socket.connect(new InetSocketAddress(host, port), 2500); }
+            // Times a TCP handshake to the server and sends nothing over it, so
+            // there is nothing to encrypt.
+            try (Socket socket = new Socket()) { socket.connect(new InetSocketAddress(host, port), 2500); } // nosemgrep: java.lang.security.audit.crypto.unencrypted-socket.unencrypted-socket
             return (SystemClock.elapsedRealtime() - start) + getString(R.string.text_ms);
         } catch (Exception e) { return getString(R.string.text_unreachable); }
     }
