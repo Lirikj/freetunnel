@@ -72,6 +72,11 @@ secrets, then run:
 scripts/build-android-release.sh
 ```
 
+The version is set once, as `appVersion` in `android/app/build.gradle`
+(`X.Y.Z`); `versionCode` is derived from it (`X*10000 + Y*100 + Z`). Official
+releases are tagged `android-X.Y.Z`, and the tag must equal `appVersion`. The
+preview is `0.9.0`.
+
 The script checks the required variables, runs release tests/lint, builds APK/AAB
 and verifies their signatures. Never commit keystores or credentials. The official
 project supplies its own signing identity; compatibility with fork-signed builds
