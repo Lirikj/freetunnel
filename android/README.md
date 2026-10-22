@@ -107,3 +107,18 @@ remote-server, DNS or HTTP/3 coverage.
 
 FreeTunnel and TrustTunnel are Apache-2.0. See [LICENSE](../LICENSE) and
 [TrustTunnelClient v1.1.7](https://github.com/TrustTunnel/TrustTunnelClient/tree/v1.1.7).
+
+### Failure handling and legacy rules
+
+With kill switch enabled, a fatal native disconnect or a failed start after TUN
+establishment retains the interface as a blocking guard. The notification offers
+Reconnect and Disconnect; only an explicit stop, permission revocation or service
+destruction releases the guard. Per-app exclusions and configured bypass routes
+remain outside its scope. Use Android lockdown for protection while this app's
+process is absent; lockdown also blocks apps excluded from the VPN.
+
+Native configuration checks run on a worker through a private isolated service.
+Each validation process exits after unbinding, so checks cannot change the active
+VPN's process-global native options or retain the adapter's temporary native copy
+of credentials. Legacy unsupported saved destination rules are removed during
+preparation and a notice appears on the routing screen. New rules remain strict.

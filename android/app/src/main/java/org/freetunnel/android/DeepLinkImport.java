@@ -16,15 +16,11 @@ final class DeepLinkImport {
 
     static final class Imported {
         final String name;
-        final String hostname;
         final String toml;
-        final boolean skipVerification;
 
-        Imported(String name, String hostname, String toml, boolean skipVerification) {
+        Imported(String name, String toml) {
             this.name = name;
-            this.hostname = hostname;
             this.toml = toml;
-            this.skipVerification = skipVerification;
         }
     }
 
@@ -79,7 +75,7 @@ final class DeepLinkImport {
         String name = clean(fields.displayName).trim();
         if (name.isEmpty()) name = hostname;
         if (name.length() > 80) name = name.substring(0, 80);
-        return new Imported(name, hostname, toToml(fields), fields.skipVerification);
+        return new Imported(name, toToml(fields));
     }
 
     private static String extractPayload(String link) throws ParseException {

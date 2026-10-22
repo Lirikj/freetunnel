@@ -43,7 +43,6 @@ class FreeTunnelVpnService : VpnService() {
             val intent = Intent(context, FreeTunnelVpnService::class.java).setAction(ACTION_START).putExtra(EXTRA_CONFIG, source)
             context.startForegroundService(intent)
         }
-        @JvmStatic fun restart(context: Context, source: String) = start(context, source)
         @JvmStatic fun stop(context: Context) {
             context.startForegroundService(Intent(context, FreeTunnelVpnService::class.java).setAction(ACTION_STOP))
         }
@@ -56,6 +55,9 @@ class FreeTunnelVpnService : VpnService() {
     private var collector: NetworkUtils.Companion.NetworkCollector? = null
     private var generation = 0L
     private var establishedThisRequest = false
+    private var keepBlocked = true
+    private var activeSource: String? = null
+    @Volatile private var permissionEpoch = 0L
     @Volatile private var destroyed = false
     @Volatile private var latestStartId = 0
 
@@ -66,6 +68,11 @@ class FreeTunnelVpnService : VpnService() {
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "FreeTunnel VPN", NotificationManager.IMPORTANCE_LOW))
         manager.createNotificationChannel(NotificationChannel(FAILURE_CHANNEL, getString(R.string.text_vpn_disconnected), NotificationManager.IMPORTANCE_HIGH))
         startForeground(NOTIFICATION_ID, notification(getString(R.string.text_preparing_vpn)))
+        collector = NetworkUtils.Companion.NetworkCollector().also { networks ->
+            getSystemService(ConnectivityManager::class.java).registerNetworkCallback(NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), networks)
+        }
         // Migrate away from stale persistent state, including pre-upgrade installs.
         prefs.edit { remove("vpn_state"); remove("service_config_encrypted") }
     }
@@ -78,36 +85,39 @@ class FreeTunnelVpnService : VpnService() {
         latestStartId = startId
         // A new start may arrive after stopForeground but before onDestroy.
         // onCreate is not called again in that window; acknowledge every FGS start.
-        startForeground(NOTIFICATION_ID, notification(getString(R.string.text_connecting)))
+        startForeground(NOTIFICATION_ID, notification(stateText()))
+        val epoch = permissionEpoch
         execute {
-            if (destroyed || startId != latestStartId) return@execute
+            if (destroyed || startId != latestStartId || epoch != permissionEpoch) return@execute
             if (intent?.action == ACTION_STOP) {
                 close()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelfResult(startId)
                 return@execute
             }
+            startForeground(NOTIFICATION_ID, notification(stateText()))
             val previous = client
             establishedThisRequest = false
             try {
-                val source = intent?.getStringExtra(EXTRA_CONFIG) ?: SavedProfile.selected(prefs)
+                val source = intent?.getStringExtra(EXTRA_CONFIG) ?: activeSource ?: SavedProfile.selected(prefs)
                 val plan = RoutingConfig.prepare(this, source)
-                replace(plan, startId)
+                check(VpnService.prepare(this) == null) { "VPN permission is required" }
+                replace(plan, startId, epoch)
+                activeSource = source
             } catch (error: Throwable) {
-                if (!destroyed && startId == latestStartId) {
-                    if (previous != null && client === previous && !establishedThisRequest) {
-                        logEvent("Настройки VPN не применены: ${error.javaClass.simpleName}")
+                if (!destroyed && startId == latestStartId && epoch == permissionEpoch) {
+                    if (retainedTun != null && client === previous && !establishedThisRequest) {
+                        logEvent("VPN settings rejected: ${error.javaClass.simpleName}")
+                        publishState(currentState)
+                        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, notification(stateText()))
                         getSystemService(NotificationManager::class.java).notify(FAILURE_ID,
                             NotificationCompat.Builder(this, FAILURE_CHANNEL).setSmallIcon(android.R.drawable.ic_dialog_alert)
-                                .setContentTitle(getString(R.string.text_vpn_settings_were_not_applied)).setContentText(getString(R.string.text_the_previous_connection_is_still_active))
+                                .setContentTitle(getString(R.string.text_vpn_settings_were_not_applied)).setContentText(getString(R.string.config_validation_error, error.message))
                                 .setContentIntent(openApp()).setAutoCancel(true).build())
                         return@execute
                     }
-                    close()
-                    logEvent("Ошибка запуска VPN: ${error.javaClass.simpleName}")
-                    showFailure(getString(R.string.text_could_not_start_vpn))
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelfResult(startId)
+                    logEvent("VPN start failed: ${error.javaClass.simpleName}")
+                    fail(getString(R.string.text_could_not_start_vpn))
                 }
             }
         }
@@ -116,10 +126,10 @@ class FreeTunnelVpnService : VpnService() {
         return if (intent?.action == ACTION_STOP) START_NOT_STICKY else START_STICKY
     }
 
-    private fun replace(plan: RoutingConfig.Plan, startId: Int) {
-        NativeConfigValidator.validate(plan.toml)
+    private fun replace(plan: RoutingConfig.Plan, startId: Int, epoch: Long) {
+        NativeConfigValidator.validate(this, plan.toml)
         val parsed = RoutingConfig.validate(plan.toml)
-        val config = VpnServiceConfig.parseToml(plan.toml) ?: error("Неверный конфиг")
+        val config = VpnServiceConfig.parseToml(plan.toml) ?: error("Invalid adapter configuration")
         val verifier = CertificateVerificator()
         val token = generation + 1
         val listener = object : VpnClientListener {
@@ -128,13 +138,10 @@ class FreeTunnelVpnService : VpnService() {
             override fun onConnectionInfo(info: String) = Unit
             override fun onStateChanged(state: Int) = execute {
                 if (destroyed || token != generation) return@execute
-                publishState(state)
                 if (state == 0) {
-                    close()
-                    showFailure(getString(R.string.text_connection_to_the_server_was_lost))
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelfResult(latestStartId)
+                    fail(getString(R.string.text_connection_to_the_server_was_lost))
                 } else {
+                    publishState(state)
                     getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID,
                         notification(if (state == 2) getString(R.string.text_connected) else getString(R.string.text_recovering_connection), plan.warning))
                 }
@@ -142,30 +149,29 @@ class FreeTunnelVpnService : VpnService() {
         }
         var candidate: VpnClient? = null
         var descriptor: ParcelFileDescriptor? = null
-        var guard: ParcelFileDescriptor? = null
         try {
             candidate = VpnClient(plan.toml, listener)
-            if (destroyed || startId != latestStartId) return
-            descriptor = createTun(config, parsed.getBoolean("endpoint.has_ipv6") ?: false, plan)
+            if (destroyed || startId != latestStartId || epoch != permissionEpoch) return
+            val newTun = createTun(config, parsed.getBoolean("endpoint.has_ipv6") ?: false, plan)
             establishedThisRequest = true
-            guard = ParcelFileDescriptor.dup(descriptor.fileDescriptor)
-            check(!destroyed) { "Запуск отменён" }
-            // establish() replaces the VPN atomically. Only now release the previous
-            // client and fd. The duplicate retains ownership throughout replacement.
+            // Own the new TUN before any operation that can fail. The core receives
+            // a duplicate; our descriptor survives native failure and closes on stop.
             close(publish = false)
+            retainedTun = newTun
+            keepBlocked = parsed.getBoolean("killswitch_enabled") ?: true
+            activeSource = plan.toml
+            check(!destroyed && epoch == permissionEpoch) { "VPN start cancelled" }
             generation = token
             client = candidate
-            retainedTun = guard
-            guard = null
+            descriptor = ParcelFileDescriptor.dup(newTun.fileDescriptor)
             publishState(1)
-            check(candidate.start(descriptor)) { "Ядро отвергло конфигурацию" }
-            startNetworks(candidate)
+            collector?.startNotifying(candidate)
+            check(candidate.start(descriptor)) { "VPN core rejected the configuration" }
             candidate = null
             getSystemService(NotificationManager::class.java).cancel(FAILURE_ID)
-            logEvent("TrustTunnel: запуск соединения")
+            logEvent("TrustTunnel: starting connection")
         } finally {
             runCatching { descriptor?.close() }
-            runCatching { guard?.close() }
             candidate?.let { runCatching { it.stop() }; runCatching { it.close() } }
         }
     }
@@ -173,7 +179,7 @@ class FreeTunnelVpnService : VpnService() {
     private fun createTun(config: VpnServiceConfig, hasIpv6: Boolean, plan: RoutingConfig.Plan): ParcelFileDescriptor {
         val tun = config.listener.tun
         val ipv6 = hasIpv6 && tun.includedRoutes.any { ':' in it }
-        require(tun.mtuSize in (if (ipv6) 1280L else 576L)..65535L) { "Неверный MTU" }
+        require(tun.mtuSize in (if (ipv6) 1280L else 576L)..65535L) { "Invalid MTU" }
         val builder = Builder().setSession("FreeTunnel").setMtu(tun.mtuSize.toInt()).addAddress("172.20.2.13", 32)
         if (Build.VERSION.SDK_INT >= 29) builder.setMetered(false)
         if (ipv6) builder.addAddress("fdfd:29::2", 128)
@@ -182,10 +188,10 @@ class FreeTunnelVpnService : VpnService() {
         dns.forEach(builder::addDnsServer)
         val included = tun.includedRoutes.filter { ipv6 || ':' !in it }
         val excluded = tun.excludedRoutes.filter { ipv6 || ':' !in it } + RoutingConfig.platformExcludedRoutes
-        val routes = VpnClient.excludeCidr(included, excluded) ?: error("Неверные маршруты")
-        require(routes.isNotEmpty()) { "Нет маршрутов VPN" }
+        val routes = VpnClient.excludeCidr(included, excluded) ?: error("Invalid routes")
+        require(routes.isNotEmpty()) { "No VPN routes" }
         routes.forEach {
-            val pair = NetworkUtils.convertCidrToAddressPrefixPair(it) ?: error("Неверная подсеть")
+            val pair = NetworkUtils.convertCidrToAddressPrefixPair(it) ?: error("Invalid subnet")
             builder.addRoute(pair.first, pair.second)
         }
         val installed = plan.apps.filter { it != packageName }.filter {
@@ -198,39 +204,53 @@ class FreeTunnelVpnService : VpnService() {
             if (!plan.allowApps) installed.forEach(builder::addDisallowedApplication)
             builder.addDisallowedApplication(packageName)
         }
-        return builder.establish() ?: error("Android не создал интерфейс VPN")
+        return builder.establish() ?: error("Android could not establish VPN")
     }
 
-    private fun startNetworks(client: VpnClient) {
-        val networks = NetworkUtils.Companion.NetworkCollector()
-        networks.startNotifying(client)
-        collector = networks
-        getSystemService(ConnectivityManager::class.java).registerNetworkCallback(NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN).build(), networks)
+    private fun stopClient() {
+        generation++
+        collector?.stopNotifying()
+        val old = client
+        client = null
+        old?.let { runCatching { it.stop() }; runCatching { it.close() } }
     }
 
     private fun close(publish: Boolean = true) {
-        generation++
-        collector?.let {
-            it.stopNotifying()
-            runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) }
-        }
-        collector = null
-        val old = client; client = null
-        old?.let { runCatching { it.stop() }; runCatching { it.close() } }
-        runCatching { retainedTun?.close() }; retainedTun = null
+        stopClient()
+        runCatching { retainedTun?.close() }
+        retainedTun = null
+        activeSource = null
         if (publish) publishState(0)
     }
 
+    private fun fail(reason: String) {
+        stopClient()
+        if (keepBlocked && retainedTun != null) {
+            // No consumer remains on the TUN. Traffic covered by this VPN is
+            // discarded until an explicit reconnect or disconnect.
+            publishState(6)
+            logEvent("VPN stopped; kill switch retains the TUN")
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID,
+                notification(getString(R.string.vpn_traffic_blocked)))
+        } else {
+            close()
+            showFailure(reason)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelfResult(latestStartId)
+        }
+    }
+
     override fun onRevoke() {
+        permissionEpoch++
         publishState(0)
         showFailure(getString(R.string.text_vpn_permission_was_revoked))
         val revokedId = latestStartId
         execute {
-            if (revokedId == latestStartId) {
-                close(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelfResult(revokedId)
-            }
+            // Revocation always invalidates resources, even if another START
+            // arrived while this task waited. A later start must obtain consent.
+            close()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelfResult(revokedId)
         }
     }
 
@@ -238,7 +258,11 @@ class FreeTunnelVpnService : VpnService() {
         destroyed = true
         publishState(0)
         if (owner === this) owner = null
-        execute { close(publish = false) }
+        execute {
+            close(publish = false)
+            collector?.let { runCatching { getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(it) } }
+            collector = null
+        }
         worker.shutdown()
         super.onDestroy()
     }
@@ -262,10 +286,23 @@ class FreeTunnelVpnService : VpnService() {
     private fun openApp() = PendingIntent.getActivity(this, 0,
         Intent(this, MainActivity::class.java).setAction(Intent.ACTION_MAIN), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
+    private fun stateText(): String = getString(when (currentState) {
+        2 -> R.string.text_connected
+        6 -> R.string.vpn_traffic_blocked
+        3, 4, 5 -> R.string.text_recovering_connection
+        else -> R.string.text_connecting
+    })
+
     private fun notification(status: String, warning: Int? = null): Notification = NotificationCompat.Builder(this, CHANNEL)
         .setSmallIcon(android.R.drawable.ic_lock_lock).setContentTitle("FreeTunnel").setContentText(status)
         .setStyle(NotificationCompat.BigTextStyle().bigText(listOfNotNull(status, warning?.let { getString(it) }).joinToString(". ")))
-        .setContentIntent(openApp()).setOngoing(true).setPriority(NotificationCompat.PRIORITY_LOW).build()
+        .setContentIntent(openApp())
+        .addAction(0, getString(R.string.vpn_reconnect), serviceAction(ACTION_START, 1))
+        .addAction(0, getString(R.string.text_disconnect_vpn), serviceAction(ACTION_STOP, 2))
+        .setOngoing(true).setPriority(NotificationCompat.PRIORITY_LOW).build()
+
+    private fun serviceAction(action: String, request: Int) = PendingIntent.getForegroundService(this, request,
+        Intent(this, FreeTunnelVpnService::class.java).setAction(action), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
     private fun logEvent(message: String) {
         if (!prefs.getBoolean("logging", true)) return

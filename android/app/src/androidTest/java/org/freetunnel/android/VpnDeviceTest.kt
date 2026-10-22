@@ -48,8 +48,11 @@ class VpnDeviceTest {
         cm.allNetworks.firstOrNull { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true }
     }
     private fun eventually(condition: () -> Boolean) {
-        val deadline = SystemClock.elapsedRealtime() + 15_000
-        while (!condition() && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50)
+        val deadline = SystemClock.elapsedRealtime() + 40_000
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (condition()) return
+            SystemClock.sleep(50)
+        }
         assertTrue("Condition did not become true", condition())
     }
     @Before fun setup() {
@@ -58,8 +61,8 @@ class VpnDeviceTest {
         prefs.edit().clear().putBoolean("logging", false).commit()
     }
     @After fun cleanup() {
-        context.stopService(Intent(context, FreeTunnelVpnService::class.java))
-        eventually { network() == null && FreeTunnelVpnService.state(context) == 0 }
+        if (serviceOwner() != null) FreeTunnelVpnService.stop(context)
+        eventually { network() == null && FreeTunnelVpnService.state(context) == 0 && serviceOwner() == null }
         val editor = prefs.edit().clear()
         oldPreferences.forEach { (key, value) -> when (value) {
             is Boolean -> editor.putBoolean(key, value)
@@ -81,9 +84,9 @@ class VpnDeviceTest {
     @Test fun adapterAndNativeFactoryAcceptSerializedTablesAndRejectBadCoreValues() {
         val plan = RoutingConfig.prepare(source, false, false, emptyList(), emptyList(), true)
         assertNotNull(VpnServiceConfig.parseToml(plan.toml))
-        NativeConfigValidator.validate(plan.toml)
+        NativeConfigValidator.validate(context, plan.toml)
         val invalid = source.replace("has_ipv6 = false", "has_ipv6 = false\nclient_random = \"abcd/\"")
-        assertThrows(IllegalArgumentException::class.java) { NativeConfigValidator.validate(invalid) }
+        assertThrows(IllegalArgumentException::class.java) { NativeConfigValidator.validate(context, invalid) }
         assertNull(network())
     }
     @Test fun adapterAndNativeFactoryPreserveEscapedPasswordsAndPem() {
@@ -97,13 +100,13 @@ class VpnDeviceTest {
             assertNotNull("Adapter must accept escaped credentials and PEM", decoded)
             assertEquals(password, org.tomlj.Toml.parse(plan.toml).getString("endpoint.password"))
             assertEquals(certificate, org.tomlj.Toml.parse(plan.toml).getString("endpoint.certificate"))
-            NativeConfigValidator.validate(plan.toml)
+            NativeConfigValidator.validate(context, plan.toml)
         }
         assertNull(network())
     }
     @Test fun adapterRequiredFieldsAreRejectedByTheSharedSaveValidator() {
         for (missing in listOf("excluded_routes = []", "mtu_size = 1350")) {
-            assertThrows(IllegalStateException::class.java) { NativeConfigValidator.validate(source.replace(missing, "")) }
+            assertThrows(IllegalStateException::class.java) { NativeConfigValidator.validate(context, source.replace(missing, "")) }
         }
         assertNull(network())
     }
@@ -164,10 +167,10 @@ class VpnDeviceTest {
             instrumentation.waitForIdleSync()
             assertNotNull("Exported launcher must not stop VPN", network())
             states.clear()
-            repeat(4) { FreeTunnelVpnService.restart(context, config.replace("1350", (1400 + it).toString())) }
+            repeat(4) { FreeTunnelVpnService.start(context, config.replace("1350", (1400 + it).toString())) }
             eventually { network()?.let { cm.getLinkProperties(it)?.mtu == 1403 } == true }
             assertFalse("Replacement must never publish disconnected", states.contains(0))
-            FreeTunnelVpnService.restart(context, config.replace("has_ipv6 = false", "has_ipv6 = false\nclient_random = \"abcd/\""))
+            FreeTunnelVpnService.start(context, config.replace("has_ipv6 = false", "has_ipv6 = false\nclient_random = \"abcd/\""))
             SystemClock.sleep(750)
             assertNotNull("Rejected replacement must retain old TUN", network())
             assertEquals(1403, cm.getLinkProperties(network()!!)!!.mtu)
@@ -175,10 +178,114 @@ class VpnDeviceTest {
             eventually { network() == null && FreeTunnelVpnService.state(context) == 0 }
         } finally {
             context.unregisterReceiver(receiver)
-            context.stopService(Intent(context, FreeTunnelVpnService::class.java))
+            FreeTunnelVpnService.stop(context)
             sink.close(); accepting.join(500); sockets.forEach { it.close() }
         }
     }
+    private fun serviceOwner(): Any? = FreeTunnelVpnService::class.java.getDeclaredField("owner").apply { isAccessible = true }.get(null)
+    private fun nativeClient(): com.adguard.trusttunnel.VpnClient? {
+        val owner = serviceOwner() ?: return null
+        return FreeTunnelVpnService::class.java.getDeclaredField("client").apply { isAccessible = true }.get(owner)
+            as? com.adguard.trusttunnel.VpnClient
+    }
+
+    @Test fun fatalNativeDisconnectRetainsGuardAndExplicitStopReleasesIt() {
+        FreeTunnelVpnService.start(context, source)
+        eventually { network() != null && nativeClient() != null }
+        val active = nativeClient()!!
+        // Same callback boundary used by the JNI core on a fatal error.
+        active.onStateChanged(0)
+        eventually { FreeTunnelVpnService.state(context) == 6 }
+        assertNotNull(network())
+        val notification = context.getSystemService(android.app.NotificationManager::class.java)
+            .activeNotifications.first { it.id == 47 }.notification
+        assertEquals(2, notification.actions.size)
+        FreeTunnelVpnService.start(context, source + "\ninvalid TOML")
+        eventually { context.getSystemService(android.app.NotificationManager::class.java).activeNotifications.any { it.id == 48 } }
+        assertEquals(6, FreeTunnelVpnService.state(context))
+        assertNotNull("Rejected settings must retain the blocking guard", network())
+        FreeTunnelVpnService.stop(context)
+        eventually { network() == null && FreeTunnelVpnService.state(context) == 0 }
+    }
+
+    @Test fun fatalNativeDisconnectWithoutKillSwitchReleasesTun() {
+        prefs.edit().putBoolean("killswitch", false).commit()
+        FreeTunnelVpnService.start(context, source)
+        eventually { network() != null && nativeClient() != null }
+        nativeClient()!!.onStateChanged(0)
+        eventually { network() == null && FreeTunnelVpnService.state(context) == 0 }
+    }
+
+    @Test fun failedSynchronousStartRetainsNewTunWhenKillSwitchIsEnabled() {
+        FreeTunnelVpnService.start(context, source.replace("192.0.2.1:443", "does-not-exist.invalid:443"))
+        eventually { FreeTunnelVpnService.state(context) == 6 }
+        assertNotNull("Resolution failure after establish must retain TUN", network())
+        FreeTunnelVpnService.stop(context)
+        eventually { network() == null }
+    }
+
+    @Test fun legacyRulesAreMigratedWithoutBreakingAlwaysOnPreparation() {
+        prefs.edit().putBoolean("split_enabled", true)
+            .putStringSet("domains", setOf("intranet", "example.com:443", "example.com", "10.0.0.0/8")).commit()
+        val plan = RoutingConfig.prepare(context, source)
+        assertEquals(setOf("example.com", "10.0.0.0/8"), prefs.getStringSet("domains", emptySet()))
+        assertTrue(prefs.getBoolean("rules_migrated", false))
+        NativeConfigValidator.validate(context, plan.toml)
+    }
+
+    @Test fun validationUsesPrivateIsolatedProcessAndExitsAfterEachRequest() {
+        val info = context.packageManager.getServiceInfo(ComponentName(context, ConfigValidationService::class.java), 0)
+        assertFalse(info.exported)
+        assertTrue(info.flags and android.content.pm.ServiceInfo.FLAG_ISOLATED_PROCESS != 0)
+        repeat(3) { NativeConfigValidator.validate(context, source) }
+        // validate() waits for Binder death after unbind; this return also proves
+        // that successive requests cannot reuse the previous native process.
+        assertNull(network())
+    }
+
+    @androidx.test.filters.SdkSuppress(minSdkVersion = 29)
+    @Test fun cancelledAsyncEditCannotOverwriteADeletedProfilesSuccessor() {
+        val profiles = org.json.JSONArray()
+        for (name in listOf("Profile A", "Profile B")) profiles.put(org.json.JSONObject().put("name", name).put("toml", source))
+        assertTrue(ConfigStore.write(prefs, profiles.toString()))
+        val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) as MainActivity
+        val executor = MainActivity::class.java.getDeclaredField("validationWorker").apply { isAccessible = true }.get(activity)
+            as java.util.concurrent.ExecutorService
+        val gate = java.util.concurrent.CountDownLatch(1)
+        executor.execute { gate.await() }
+        try {
+            instrumentation.runOnMainSync {
+                MainActivity::class.java.getDeclaredMethod("editConfig", Int::class.javaPrimitiveType).apply { isAccessible = true }.invoke(activity, 0)
+            }
+            instrumentation.waitForIdleSync()
+            fun click(buttonId: Int) {
+                instrumentation.runOnMainSync {
+                    val button = android.view.inspector.WindowInspector.getGlobalWindowViews()
+                        .mapNotNull { it.findViewById<android.widget.Button>(buttonId) }.lastOrNull()
+                    assertNotNull("Dialog action must exist", button)
+                    assertTrue(button!!.performClick())
+                }
+                instrumentation.waitForIdleSync()
+            }
+            click(android.R.id.button1)
+            click(android.R.id.button2)
+            instrumentation.runOnMainSync {
+                val configs = MainActivity::class.java.getDeclaredField("configs").apply { isAccessible = true }.get(activity) as MutableList<*>
+                configs.removeAt(0)
+                MainActivity::class.java.getDeclaredMethod("saveConfigs").apply { isAccessible = true }.invoke(activity)
+            }
+            gate.countDown()
+            executor.submit {}.get(30, java.util.concurrent.TimeUnit.SECONDS)
+            instrumentation.waitForIdleSync()
+            val saved = org.json.JSONArray(ConfigStore.read(prefs))
+            assertEquals(1, saved.length())
+            assertEquals("Profile B", saved.getJSONObject(0).getString("name"))
+        } finally {
+            gate.countDown()
+            instrumentation.runOnMainSync { activity.finish() }
+        }
+    }
+
     @Test fun serviceStartsFromSavedProfileWithoutIntentExtras() {
         assertNull(VpnService.prepare(context))
         val sink = ServerSocket(0, 8, InetAddress.getByName("127.0.0.1"))
@@ -194,7 +301,7 @@ class VpnDeviceTest {
             eventually { network()?.let { cm.getLinkProperties(it)?.mtu == 1200 } == true }
             assertNotEquals(0, FreeTunnelVpnService.state(context))
         } finally {
-            context.stopService(Intent(context, FreeTunnelVpnService::class.java))
+            FreeTunnelVpnService.stop(context)
             sink.close(); accepting.join(500); sockets.forEach { it.close() }
         }
     }

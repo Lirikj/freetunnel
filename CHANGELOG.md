@@ -9,6 +9,12 @@ compare link at the bottom of its release notes.
 
 ### Fixed
 
+- **Android preview: kill switch keeps traffic blocked after a fatal connection
+  error or a failed settings replacement.** Reconnect or disconnect from the VPN
+  notification. Configuration checks run in an isolated background process;
+  cancelling an edit no longer applies it later. Unsupported old routing rules
+  are removed with a notice instead of preventing connections.
+
 - **Windows: installing no longer stops on "Error opening file for writing",
   and uninstalling no longer leaves files behind, when FreeTunnel is slow to
   close.** After closing it by force at ten seconds, both now wait up to about

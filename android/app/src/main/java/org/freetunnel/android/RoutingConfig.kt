@@ -1,6 +1,7 @@
 package org.freetunnel.android
 
 import org.tomlj.Toml
+import androidx.core.content.edit
 import org.tomlj.TomlArray
 import org.tomlj.TomlTable
 
@@ -96,8 +97,13 @@ object RoutingConfig {
             try { context.packageManager.getApplicationInfo(it, 0); true }
             catch (_: android.content.pm.PackageManager.NameNotFoundException) { false }
         }
+        val saved = prefs.getStringSet("domains", emptySet()).orEmpty()
+        val valid = saved.filter { SplitRules.core(it) != null }.toSet()
+        if (valid.size != saved.size) {
+            prefs.edit { putStringSet("domains", valid); putBoolean("rules_migrated", true) }
+        }
         return prepare(source, prefs.getBoolean("split_enabled", false), prefs.getBoolean("through", false),
-            prefs.getStringSet("domains", emptySet()).orEmpty().toList(), apps, prefs.getBoolean("killswitch", true))
+            valid.toList(), apps, prefs.getBoolean("killswitch", true))
     }
 
     @JvmStatic fun prepare(source: String, enabled: Boolean, through: Boolean,

@@ -1,15 +1,20 @@
 name: Android
 on:
   push:
-    paths: ['android/**', 'scripts/prepare-trusttunnel-android.sh', 'scripts/build-android-release.sh', '.github/workflows/android.yml']
+    branches: [main]
+    paths: ['include/core/ReleaseSigning.h', 'android/**', 'scripts/prepare-trusttunnel-android.sh', 'scripts/build-android-release.sh', '.github/workflows/android.yml']
   pull_request:
-    paths: ['android/**', 'scripts/prepare-trusttunnel-android.sh', 'scripts/build-android-release.sh', '.github/workflows/android.yml']
+    paths: ['include/core/ReleaseSigning.h', 'android/**', 'scripts/prepare-trusttunnel-android.sh', 'scripts/build-android-release.sh', '.github/workflows/android.yml']
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build, unit tests and lint
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -17,10 +22,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
-        with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
-          log-accepted-android-sdk-licenses: false
+      - name: Ensure Android SDK 35 packages
+        # Ubuntu 24.04 already supplies command-line tools. Reuse them rather than
+        # downloading a second toolchain before each job.
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"'
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
       - run: bash -n scripts/build-android-release.sh
       - run: scripts/prepare-trusttunnel-android.sh
@@ -35,7 +40,8 @@ jobs:
             android/app/build/outputs/bundle/release/*.aab
             android/app/build/reports/
   device-tests:
-    runs-on: ubuntu-latest
+    name: Android API 35 device tests
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -43,10 +49,10 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
-        with:
-          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
-          log-accepted-android-sdk-licenses: false
+      - name: Ensure Android SDK 35 packages
+        # Ubuntu 24.04 already supplies command-line tools. Reuse them rather than
+        # downloading a second toolchain before each job.
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0"'
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
       - run: bash -n scripts/build-android-release.sh
       - run: scripts/prepare-trusttunnel-android.sh

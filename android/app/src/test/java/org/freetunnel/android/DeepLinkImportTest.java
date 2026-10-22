@@ -54,13 +54,13 @@ public final class DeepLinkImportTest {
         DeepLinkImport.Imported fromDirect = DeepLinkImport.parse(direct);
         DeepLinkImport.Imported fromPage = DeepLinkImport.parse(page);
         assertEquals("Test VPN", fromDirect.name);
-        assertEquals("vpn.example.com", fromPage.hostname);
+        assertTrue(fromPage.toml.contains("hostname = \"vpn.example.com\""));
         assertEquals(fromDirect.toml, fromPage.toml);
         assertTrue(fromPage.toml.contains("addresses = [\"192.0.2.1:443\", \"192.0.2.2:443\"]"));
         assertTrue(fromPage.toml.contains("dns_upstreams = [\"https://dns.example/dns-query\"]"));
         assertTrue(fromPage.toml.indexOf("[endpoint]") < fromPage.toml.indexOf("dns_upstreams ="));
         assertTrue(fromPage.toml.contains("password = \"secret\""));
-        assertFalse(fromPage.skipVerification);
+        assertTrue(fromPage.toml.contains("skip_verification = false"));
         assertTrue(fromPage.toml.contains("included_routes = [\"0.0.0.0/0\", \"2000::/3\"]"));
         assertFalse(fromPage.toml.contains("\"::/0\""));
     }
