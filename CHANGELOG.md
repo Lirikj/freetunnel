@@ -9,6 +9,10 @@ compare link at the bottom of its release notes.
 
 ### Added
 
+- **Android fork distribution 1.0.1 combines the reviewed fixes in an installable APK.**
+  Existing fork 1.0.0 installations can update with their profiles preserved.
+  Official project publishing remains separate.
+
 - **Android preview: check for official Android updates in Settings.** Downloads
   require a signed manifest naming the offered version and a matching APK hash.
   Android asks before installation. Optional launch checks can be disabled.
