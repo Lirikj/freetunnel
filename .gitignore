@@ -40,8 +40,8 @@ ui_*.h
 *.dll
 *.a
 *.lib
-FreeTunnel
-freetunnel
+/FreeTunnel
+/freetunnel
 
 # Logs/temp
 *.log
@@ -57,3 +57,11 @@ venv/
 .idea/
 .vscode/
 *.swp
+
+# Private Android signing material
+*.jks
+*.keystore
+*.p12
+*.pfx
+signing.json
+signing.properties
