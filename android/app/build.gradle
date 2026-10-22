@@ -3,12 +3,9 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
-// The app's version, X.Y.Z, set here and nowhere else. An official release is
-// tagged android-X.Y.Z, and the tag must equal this, as the desktop's v-tags must
-// equal project(VERSION). versionCode follows from it, X*10000 + Y*100 + Z, so it
-// always grows with the version. The preview is 0.9.0, below the first official
-// android-1.0.0, so that an update check offers that release to preview installs.
-def appVersion = '0.9.0'
+// Android version, shared by the APK, bundle and UI. Release tags must match.
+// This fork release updates existing fork 1.0.0 installs with the same signer.
+def appVersion = '1.0.1'
 def appVersionCode = appVersion.tokenize('.').collect { it as int }.with { it[0] * 10000 + it[1] * 100 + it[2] }
 
 dependencies {

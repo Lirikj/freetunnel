@@ -1,6 +1,6 @@
-# Android preview changes
+# Android changes
 
-## Unreleased
+## 1.0.1 (fork distribution)
 
 - Add authenticated official Android update discovery, Ed25519/version/hash verification, private downloads and PackageInstaller consent; launch checks are optional.
 
@@ -9,7 +9,8 @@
 - Fix permission-revocation cleanup, preserve state after rejected replacement, and reuse one network collector per service lifetime.
 - Migrate unsupported legacy destination rules, show imported rules, explain per-app lockdown, and require unlock for secure locked tiles.
 - Pin Android CI to Ubuntu 24.04, serialize superseded runs and limit push builds to main; verify release APK signer identity.
- preview
+
+## Preview foundation
 
 The preview includes import-only external links, private VPN consent, shared
 split-routing policy, process-local connection state, default kill switch,
@@ -22,5 +23,6 @@ restores global IPv6 link-import routes, and serializes ordinary TOML tables for
 adapter compatibility with escaped credentials and PEM certificates.
 
 Release signing remains parameterized by environment variables or CI secrets.
-Official release publishing, versioning and signing are managed by the original
-project. No fork signing identity or stable-release claim is part of this PR.
+Official release publishing and signing are managed by the original project.
+This fork distribution has its own signing identity and is not an official
+project release.
